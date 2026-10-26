@@ -35,6 +35,13 @@ Future<bool> isInPip() async {
   on PlatformException { return false; }
   on MissingPluginException { return false; }
 }
+/// 重新隱藏狀態列 / 導航列（main.dart 啟動時設定的 immersiveSticky，
+/// 被系統手勢或對話框叫出後有時不會自動收回）
+Future<void> reapplyImmersive() async {
+  try { await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky); }
+  on PlatformException { /* best-effort */ }
+  on MissingPluginException { /* best-effort */ }
+}
 Future<bool> enterPip() async {
   try {
     final entered = await _channel.invokeMethod<bool>('enterPip') ?? false;

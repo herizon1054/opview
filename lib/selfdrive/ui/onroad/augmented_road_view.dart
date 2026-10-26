@@ -105,22 +105,39 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
     }
   }
 
+  // 側欄寬度固定 78dp，文字必須單行；系統字型放大時改為等比縮小而非換行
+  static Widget _railLabel(String text, TextStyle style) => FittedBox(
+    fit: BoxFit.scaleDown,
+    child: Text(text, maxLines: 1, softWrap: false, style: style));
+
   Widget _railButton(IconData icon, String label, VoidCallback onTap) =>
     Padding(padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
       child: SizedBox(width: 66, height: 62, child: Material(
         color: const Color(0xFF182127), borderRadius: BorderRadius.circular(16),
-        child: InkWell(borderRadius: BorderRadius.circular(16), onTap: onTap,
-          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(icon, color: dashboardTeal, size: 23), const SizedBox(height: 4),
-            Text(label, style: const TextStyle(fontSize: 10, color: Colors.white70)),
-          ])),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(onTap: onTap,
+          child: Padding(padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+              Icon(icon, color: dashboardTeal, size: 23), const SizedBox(height: 4),
+              _railLabel(label, const TextStyle(fontSize: 10, color: Colors.white70)),
+            ]))),
       )));
 
-  Widget _rail() => Container(width: 78, color: const Color(0xFF0D151B),
-    child: SafeArea(child: SingleChildScrollView(child: Column(children: [
+  void _enterFullscreen() {
+    setState(() { _showRail = false; _showDetails = false; });
+    // 系統列可能被手勢叫出後未收回，進全螢幕時重新套用 immersive
+    system.reapplyImmersive();
+  }
+
+  // 側欄不吃系統字型縮放（與右側畫面同樣 noScaling），避免手機放大字型時擠成直排
+  Widget _rail() => MediaQuery(
+    data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+    child: Container(width: 78, color: const Color(0xFF0D151B),
+    child: SafeArea(right: false, child: SingleChildScrollView(child: Column(children: [
       const SizedBox(height: 16),
-      Text(widget.uiState.isConnected ? '● LIVE' : '○ OFFLINE',
-        style: const TextStyle(color: dashboardTeal, fontSize: 10, fontWeight: FontWeight.bold)),
+      Padding(padding: const EdgeInsets.symmetric(horizontal: 6),
+        child: _railLabel(widget.uiState.isConnected ? '● LIVE' : '○ OFFLINE',
+          const TextStyle(color: dashboardTeal, fontSize: 10, fontWeight: FontWeight.bold))),
       const SizedBox(height: 12),
       _railButton(Icons.dashboard_outlined, widget.uiState.modernOverlay ? '儀表介面' : '原版介面', () {
         if (widget.settings != null) {
@@ -148,8 +165,19 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
           if (!entered && mounted) ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Android 未允許進入子母畫面')));
         }),
-      _railButton(Icons.fullscreen, '全螢幕', () => setState(() => _showRail = false)),
-    ]))));
+      _railButton(Icons.fullscreen, '全螢幕', _enterFullscreen),
+    ])))));
+
+  // 退出全螢幕按鈕：放在最外層 Stack 最上面，不會被邊框 / Connecting 遮罩吃掉點擊
+  Widget _exitFullscreenButton() => Positioned(top: 0, left: 0,
+    child: SafeArea(right: false, bottom: false, child: Padding(
+      padding: const EdgeInsets.all(10),
+      child: Material(color: const Color(0xB3182127), shape: const CircleBorder(),
+        clipBehavior: Clip.antiAlias,
+        child: IconButton(
+          tooltip: '顯示操作列', iconSize: 26,
+          icon: const Icon(Icons.fullscreen_exit, color: dashboardTeal),
+          onPressed: () => setState(() => _showRail = true))))));
 
   Widget _details() => Positioned(top: 50, bottom: 20, right: 16,
     child: Container(width: 270, padding: const EdgeInsets.all(16),
@@ -247,10 +275,6 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                           ),
                         ],
                         if (!widget.pip && _showDetails && widget.uiState.alertSize == 0) _details(),
-                        if (!widget.pip && !_showRail && widget.showControls)
-                          Positioned(top: 8, right: 8, child: IconButton(
-                            tooltip: '顯示操作列', icon: const Icon(Icons.fullscreen_exit),
-                            onPressed: () => setState(() => _showRail = true))),
                         if (!widget.pip) AlertRenderer(uiState: widget.uiState, scale: scale),
                       ],
                     ),
@@ -259,17 +283,20 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
               ),
 
               // layer 2: engagement border — always visible
-              CustomPaint(
+              // IgnorePointer: 無 child 的 CustomPaint 預設 hitTest 為 true，
+              // 會吃掉整個畫面的點擊（原本退出全螢幕按鈕因此按不到）
+              IgnorePointer(child: CustomPaint(
                 size: Size(screenW, screenH),
                 painter: _EngagementBorderPainter(
                   status: widget.uiState.status,
                   borderSize: borderSize,
                 ),
-              ),
+              )),
 
               // layer 3: connecting overlay with rolling status log
+              // Container(color:) 是 opaque hit test，同樣需讓點擊穿透
               if (!widget.pip && !widget.uiState.isConnected)
-                Container(
+                IgnorePointer(child: Container(
                   color: const Color(0xCC000000),
                   alignment: Alignment.center,
                   child: Column(
@@ -297,7 +324,11 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                       )),
                     ],
                   ),
-                ),
+                )),
+
+              // layer 4: 退出全螢幕（永遠在最上層）
+              if (!widget.pip && !_showRail && widget.showControls)
+                _exitFullscreenButton(),
             ],
           ),
         );

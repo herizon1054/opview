@@ -33,6 +33,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
   }
   void _settingsChanged() {
     _uiState.isMetric = _settings.metric;
+    _uiState.tdxEnabled = _settings.tdx;
     _uiState.modernOverlay = _settings.layout != ViewerLayout.classic;
     _uiState.notifyNow();
     _updatePipOffer();

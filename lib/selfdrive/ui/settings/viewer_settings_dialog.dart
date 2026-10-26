@@ -21,6 +21,9 @@ class ViewerSettingsDialog extends StatelessWidget {
             ], onChanged: (v) { if (v != null) settings.setLayout(v); }),
           SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('公制 km/h'),
             value: settings.metric, onChanged: settings.setMetric),
+          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('自動進入全螢幕'),
+            subtitle: const Text('連線且畫面開始更新後 3 秒收起側欄；點左上角可叫回，下次連線再自動收起'),
+            value: settings.autoFullscreen, onChanged: settings.setAutoFullscreen),
           if (system.pipSupported.value)
           SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('子母畫面 PiP'),
             subtitle: const Text('連線時按 Home 保留畫面'),

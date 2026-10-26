@@ -8,6 +8,8 @@ class ViewerSettings extends ChangeNotifier {
   ViewerLayout layout = ViewerLayout.dashboard;
   bool metric = true;
   bool pictureInPicture = false;
+  bool tdx = true; // dplcc TDX 路況顯示（前方車速 + 事件跑馬燈）
+  bool autoFullscreen = false; // 連線後自動收起側欄
   double? brightness;
   int hudEvery = 4; // HUD ~5 Hz when modelV2 is 20 Hz; path and alerts unchanged.
   SharedPreferences? _prefs;
@@ -21,6 +23,8 @@ class ViewerSettings extends ChangeNotifier {
     layout = ViewerLayout.values.firstWhere((e) => e.name == name, orElse: () => ViewerLayout.dashboard);
     metric = prefs.getBool('viewer_metric') ?? true;
     pictureInPicture = prefs.getBool('viewer_pip') ?? false;
+    tdx = prefs.getBool('viewer_tdx') ?? true;
+    autoFullscreen = prefs.getBool('viewer_auto_fullscreen') ?? false;
     final b = prefs.getDouble('viewer_brightness');
     brightness = b != null && b.isFinite && b >= 0 ? b.clamp(.05, 1.0).toDouble() : null;
     hudEvery = prefs.getInt('viewer_hud_every') == 1 ? 1 : 4;
@@ -32,6 +36,12 @@ class ViewerSettings extends ChangeNotifier {
   }
   void setMetric(bool value) {
     metric = value; _prefs?.setBool('viewer_metric', value); notifyListeners();
+  }
+  void setTdx(bool value) {
+    tdx = value; _prefs?.setBool('viewer_tdx', value); notifyListeners();
+  }
+  void setAutoFullscreen(bool value) {
+    autoFullscreen = value; _prefs?.setBool('viewer_auto_fullscreen', value); notifyListeners();
   }
   void setPip(bool value) {
     pictureInPicture = value; _prefs?.setBool('viewer_pip', value); notifyListeners();

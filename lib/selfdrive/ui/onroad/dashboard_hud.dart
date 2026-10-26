@@ -5,6 +5,19 @@ import '../ui_state.dart';
 
 const dashboardTeal = Color(0xFF61E3D4);
 
+/// TDX 壅塞分級顏色。分級與 tici 相同（smooth / slow / congested），
+/// 色值改用 opview 儀表盤色系：順暢 = 主色青綠，車多 / 壅塞用低飽和琥珀 / 珊瑚，
+/// 避免 tici 的高飽和純黃、純紅在深色儀表卡片上太跳。
+const tdxSmoothColor = dashboardTeal;              // tici: (128, 216, 166)
+const tdxSlowColor = Color(0xFFE2C275);            // tici: (255, 204, 0)
+const tdxCongestedColor = Color(0xFFE88A80);       // tici: (255, 100, 100)
+Color tdxCongestionColor(String congestion) => switch (congestion) {
+  'smooth' => tdxSmoothColor,
+  'slow' => tdxSlowColor,
+  'congested' => tdxCongestedColor,
+  _ => Colors.white70,
+};
+
 class DashboardHud extends StatelessWidget {
   final UIState state;
   final bool stale;
@@ -12,7 +25,8 @@ class DashboardHud extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(builder: (context, box) {
-    final width = math.min(box.maxWidth * .60, box.maxHeight * 1.20);
+    // 整體縮小 10%（原 .60 / 1.20）；卡片內字級、圖示皆依卡片高度等比，一起縮
+    final width = math.min(box.maxWidth * .54, box.maxHeight * 1.08);
     final status = stale ? '資料中斷' : switch (state.status) {
       UIStatus.engaged => 'ENGAGED',
       UIStatus.override_ => 'OVERRIDE',
@@ -59,18 +73,46 @@ class DashboardHud extends StatelessWidget {
                   SizedBox(height: h * .07),
                 ])),
               )),
-              Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                Icon(Icons.directions_car_outlined, color: color, size: h * .18),
-                Text(!stale && state.leadDistance != null ? '${state.leadDistance!.round()} m' : '—',
-                    style: TextStyle(fontSize: h * .12, fontWeight: FontWeight.w600)),
-                Text(!stale && state.leadHeadway != null ? '${state.leadHeadway!.toStringAsFixed(1)} s' : '—',
-                    style: TextStyle(fontSize: h * .10, color: Colors.white60)),
-              ])),
+              Expanded(child: _rightColumn(h, color)),
             ]);
           }),
         )),
     ]));
   });
+
+  // 右欄：有 TDX 前方車速時，小車圖示改成「前方車速」文字、下方顯示車速（依壅塞分級上色）；
+  // 前車距離 / 車頭時距縮成一行保留在最下面。沒有 TDX 資料時維持原本的小車 + 距離。
+  Widget _rightColumn(double h, Color color) {
+    final tdxSpeed = stale ? null : state.tdxNextSpeedDisplay;
+    final dist = !stale ? state.leadDistance : null;
+    final headway = !stale ? state.leadHeadway : null;
+    if (tdxSpeed == null) {
+      return Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(Icons.directions_car_outlined, color: color, size: h * .18),
+        Text(dist != null ? '${dist.round()} m' : '—',
+            style: TextStyle(fontSize: h * .12, fontWeight: FontWeight.w600)),
+        Text(headway != null ? '${headway.toStringAsFixed(1)} s' : '—',
+            style: TextStyle(fontSize: h * .10, color: Colors.white60)),
+      ]);
+    }
+    final tdxColor = tdxCongestionColor(state.tdxCongestion);
+    final lead = dist == null ? null
+        : headway == null ? '${dist.round()} m' : '${dist.round()} m · ${headway.toStringAsFixed(1)} s';
+    return FittedBox(fit: BoxFit.scaleDown, child: Column(
+      mainAxisAlignment: MainAxisAlignment.center, mainAxisSize: MainAxisSize.min, children: [
+      // 標籤與 MAX 同層級（淡白），只有數字帶分級色
+      Text('前方車速', style: TextStyle(fontSize: h * .10, color: Colors.white70,
+          fontWeight: FontWeight.w600, letterSpacing: 1, height: 1.2)),
+      Text('$tdxSpeed', style: TextStyle(fontSize: h * .22, color: tdxColor,
+          fontWeight: FontWeight.w700, height: 1.05)),
+      Text(state.isMetric ? 'km/h' : 'mph',
+          style: TextStyle(fontSize: h * .08, color: Colors.white70, height: 1.2)),
+      if (lead != null) ...[
+        SizedBox(height: h * .03),
+        Text(lead, style: TextStyle(fontSize: h * .08, color: Colors.white60, height: 1.2)),
+      ],
+    ]));
+  }
 
   Widget _badge(String text, Color color) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),

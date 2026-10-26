@@ -90,6 +90,71 @@ class UIState extends ChangeNotifier {
   // longitudinalPlan
   bool allowThrottle = true;
 
+  // tdx — dplcc 高公局即時路況（custom.Tdx，tdxd 1Hz，只在 onroad 發布）
+  // 存活判斷對齊 tici hud_renderer 的 sm.alive['tdx']：
+  //   SubMaster alive = 距上次收到 < 10 / frequency 秒，services.py tdx = 1Hz → 10 秒
+  static const tdxAliveTimeout = Duration(seconds: 10);
+  DateTime? lastTdxAt;
+  int _tdxNextSpeedRaw = -1;      // km/h，-1 = 無資料
+  String tdxCongestion = 'unknown'; // unknown / smooth / slow / congested
+  final List<({String description, bool isCurrentSection})> _tdxEvents = [];
+
+  // 手機端顯示開關（側欄 TDX 按鈕），關閉時照樣接收，只是不顯示
+  bool tdxEnabled = true;
+
+  bool get _tdxAlive => tdxEnabled && lastTdxAt != null &&
+      DateTime.now().difference(lastTdxAt!) < tdxAliveTimeout;
+
+  /// 前方路段車速 (km/h)；與 tici 相同只在 0 < v <= 150 時有效，否則 null
+  int? get tdxNextSpeedKph =>
+      _tdxAlive && _tdxNextSpeedRaw > 0 && _tdxNextSpeedRaw <= 150 ? _tdxNextSpeedRaw : null;
+
+  /// 前方車速（目前單位），無資料為 null
+  int? get tdxNextSpeedDisplay {
+    final v = tdxNextSpeedKph;
+    if (v == null) return null;
+    return isMetric ? v : (v * kmToMile).round();
+  }
+
+  /// 事件文字，格式與 tici 相同：「目前: a / b」或「前方: a / b」，無事件為空字串
+  String get tdxEventText {
+    if (!_tdxAlive || _tdxEvents.isEmpty) return '';
+    final loc = _tdxEvents.first.isCurrentSection ? '目前' : '前方';
+    return '$loc: ${_tdxEvents.map((e) => e.description).join(' / ')}';
+  }
+
+  void applyTdx(Map<String, dynamic> data) {
+    lastTdxAt = DateTime.now();
+    final speed = data['nextSpeed'];
+    _tdxNextSpeedRaw = speed is num && speed.isFinite ? speed.toInt() : -1;
+    final congestion = data['congestion'];
+    // pycapnp to_dict() 把 enum 轉成名稱字串；保險起見也接受序號
+    tdxCongestion = congestion is String ? congestion
+        : congestion is int && congestion >= 0 && congestion < _tdxCongestionNames.length
+            ? _tdxCongestionNames[congestion] : 'unknown';
+    _tdxEvents.clear();
+    final events = data['events'];
+    if (events is List) {
+      for (final e in events) {
+        if (e is! Map) continue;
+        final desc = e['description'];
+        if (desc is! String || desc.isEmpty) continue;
+        _tdxEvents.add((description: desc, isCurrentSection: e['isCurrentSection'] == true));
+      }
+    }
+    // no notify — picked up on next modelV2
+  }
+
+  /// 斷線時清掉，避免重連後顯示上次的路況（對應 tici 熄火時 _reset_tdx）
+  void resetTdx() {
+    lastTdxAt = null;
+    _tdxNextSpeedRaw = -1;
+    tdxCongestion = 'unknown';
+    _tdxEvents.clear();
+  }
+
+  static const _tdxCongestionNames = ['unknown', 'smooth', 'slow', 'congested'];
+
   // throttle blend — smooth fade between throttle/no-throttle path colors
   // first-order filter: tau=0.25s, updated at modelV2 rate (~20Hz)
   double throttleBlend = 1.0; // 1.0 = full throttle colors, 0.0 = no-throttle

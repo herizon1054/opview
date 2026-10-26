@@ -221,6 +221,7 @@ class ConnectionManager {
   void _setConnected(bool connected) {
     if (_uiState.isConnected == connected) return;
     _uiState.isConnected = connected;
+    if (!connected) _uiState.resetTdx();
     _uiState.notifyNow();
     wake_lock.setKeepScreenOn(connected);
   }

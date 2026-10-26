@@ -105,21 +105,27 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
     }
   }
 
-  // 側欄寬度固定 78dp，文字必須單行；系統字型放大時改為等比縮小而非換行
+  // -- 側欄尺寸 --
+  // 內容區寬度固定；左側瀏海 / 挖孔安全區另外加寬，不再從內容寬度裡扣
+  static const double _railContentWidth = 88;
+  static const double _railButtonHeight = 62;
+  static const _railLabelStyle = TextStyle(fontSize: 13, height: 1.15, color: Colors.white70);
+
+  // 單行；FittedBox 只當極端情況的保險，正常字級下不會縮
   static Widget _railLabel(String text, TextStyle style) => FittedBox(
     fit: BoxFit.scaleDown,
     child: Text(text, maxLines: 1, softWrap: false, style: style));
 
   Widget _railButton(IconData icon, String label, VoidCallback onTap) =>
-    Padding(padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
-      child: SizedBox(width: 66, height: 62, child: Material(
-        color: const Color(0xFF182127), borderRadius: BorderRadius.circular(16),
+    Padding(padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 6),
+      child: SizedBox(height: _railButtonHeight, child: Material(
+        color: const Color(0xFF182127), borderRadius: BorderRadius.circular(14),
         clipBehavior: Clip.antiAlias,
         child: InkWell(onTap: onTap,
           child: Padding(padding: const EdgeInsets.symmetric(horizontal: 4),
             child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Icon(icon, color: dashboardTeal, size: 23), const SizedBox(height: 4),
-              _railLabel(label, const TextStyle(fontSize: 10, color: Colors.white70)),
+              Icon(icon, color: dashboardTeal, size: 24), const SizedBox(height: 4),
+              _railLabel(label, _railLabelStyle),
             ]))),
       )));
 
@@ -129,16 +135,20 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
     system.reapplyImmersive();
   }
 
-  // 側欄不吃系統字型縮放（與右側畫面同樣 noScaling），避免手機放大字型時擠成直排
-  Widget _rail() => MediaQuery(
-    data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
-    child: Container(width: 78, color: const Color(0xFF0D151B),
-    child: SafeArea(right: false, child: SingleChildScrollView(child: Column(children: [
-      const SizedBox(height: 16),
-      Padding(padding: const EdgeInsets.symmetric(horizontal: 6),
-        child: _railLabel(widget.uiState.isConnected ? '● LIVE' : '○ OFFLINE',
-          const TextStyle(color: dashboardTeal, fontSize: 10, fontWeight: FontWeight.bold))),
+  // 系統字型放大最多跟到 1.2 倍：看得清楚，但不會撐爆固定寬度的側欄
+  Widget _rail() {
+    final mq = MediaQuery.of(context);
+    final inset = mq.padding;
+    return MediaQuery(
+    data: mq.copyWith(textScaler: mq.textScaler.clamp(minScaleFactor: 1.0, maxScaleFactor: 1.2)),
+    child: Container(width: _railContentWidth + inset.left, color: const Color(0xFF0D151B),
+    padding: EdgeInsets.only(left: inset.left, top: inset.top, bottom: inset.bottom),
+    child: SingleChildScrollView(child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       const SizedBox(height: 12),
+      Center(child: _railLabel(widget.uiState.isConnected ? '● LIVE' : '○ OFFLINE',
+        const TextStyle(color: dashboardTeal, fontSize: 12, fontWeight: FontWeight.bold))),
+      const SizedBox(height: 10),
       _railButton(Icons.dashboard_outlined, widget.uiState.modernOverlay ? '儀表介面' : '原版介面', () {
         if (widget.settings != null) {
           widget.settings!.setLayout(widget.uiState.modernOverlay ? ViewerLayout.classic : ViewerLayout.dashboard);
@@ -166,7 +176,9 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
             const SnackBar(content: Text('Android 未允許進入子母畫面')));
         }),
       _railButton(Icons.fullscreen, '全螢幕', _enterFullscreen),
-    ])))));
+      const SizedBox(height: 8),
+    ]))));
+  }
 
   // 退出全螢幕按鈕：放在最外層 Stack 最上面，不會被邊框 / Connecting 遮罩吃掉點擊
   Widget _exitFullscreenButton() => Positioned(top: 0, left: 0,
@@ -210,7 +222,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Row(children: [
+      body: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         if (_showRail && widget.showControls && !widget.pip) _rail(),
         Expanded(child: LayoutBuilder(builder: (context, constraints) {
         final screenW = constraints.maxWidth;

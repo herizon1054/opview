@@ -94,8 +94,8 @@ class ModelRendererPainter extends CustomPainter {
     ));
 
     // project path (shorten for lead vehicle)
-    if (state.leadOne != null && state.leadOne!['status'] == true) {
-      final leadD = (state.leadOne!['dRel'] as num).toDouble() * 2.0;
+    if (state.leadDistance != null) {
+      final leadD = state.leadDistance! * 2.0;
       maxDist = (leadD - min(leadD * 0.35, 10.0)).clamp(0.0, maxDist);
     }
     final pathMaxIdx = _getPathLengthIdx(pathX, maxDist);
@@ -135,6 +135,15 @@ class ModelRendererPainter extends CustomPainter {
   void _drawPath(Canvas canvas, List<Offset> pathPoly) {
     if (pathPoly.isEmpty) return;
 
+    if (state.modernOverlay) {
+      _drawGradientPolygon(canvas, pathPoly, const [
+        Color(0x882CD4C3), Color(0x552CD4C3), Color(0x102CD4C3),
+      ], [0.0, 0.6, 1.0]);
+      final outline = Path()..addPolygon(pathPoly, true);
+      canvas.drawPath(outline, Paint()..color = const Color(0xAA61E3D4)
+        ..style = PaintingStyle.stroke..strokeWidth = 2);
+      return;
+    }
     if (state.experimentalMode) {
       _drawExperimentalPath(canvas, pathPoly);
       return;
@@ -188,18 +197,53 @@ class ModelRendererPainter extends CustomPainter {
     for (final lead in leads) {
       if (lead == null || lead['status'] != true) continue;
 
-      final dRel = (lead['dRel'] as num).toDouble();
-      final vRel = (lead['vRel'] as num).toDouble();
-      final yRel = (lead['yRel'] as num).toDouble();
+      final dRel = (lead['dRel'] as num?)?.toDouble();
+      final vRel = (lead['vRel'] as num?)?.toDouble() ?? 0;
+      final yRel = (lead['yRel'] as num?)?.toDouble();
+      if (dRel == null || yRel == null || !dRel.isFinite ||
+          !yRel.isFinite || !vRel.isFinite || dRel <= 0) continue;
+      if (state.lastRadarAt != null &&
+          DateTime.now().difference(state.lastRadarAt!).inMilliseconds > 2000) continue;
       final idx = _getPathLengthIdx(pathX, dRel);
 
       final z = (idx < state.pathZ.length) ? state.pathZ[idx] : 0.0;
       final point = _mapToScreen(dRel, -yRel, z + _pathOffsetZ);
       if (point == null) continue;
 
+      if (state.modernOverlay) {
+        _drawLeadBox(canvas, point, dRel);
+        continue;
+      }
       final lv = _buildLeadVehicle(dRel, vRel, point);
       _drawLeadTriangles(canvas, lv);
     }
+  }
+
+  // A projected radar marker, not an image-detection bounding box.
+  void _drawLeadBox(Canvas canvas, Offset point, double distance) {
+    final scale = (contentRect.height / 600).clamp(0.6, 2.0);
+    final width = (1500 / distance).clamp(28.0, 85.0) * scale;
+    final rect = Rect.fromLTWH(point.dx - width / 2, point.dy - width, width, width * .7);
+    final paint = Paint()..color = const Color(0xFF61E3D4)
+      ..style = PaintingStyle.stroke..strokeWidth = 2 * scale;
+    final arm = width * .23;
+    for (final corner in [rect.topLeft, rect.topRight, rect.bottomLeft, rect.bottomRight]) {
+      final dx = corner.dx == rect.left ? arm : -arm;
+      final dy = corner.dy == rect.top ? arm : -arm;
+      canvas.drawPath(Path()..moveTo(corner.dx + dx, corner.dy)
+        ..lineTo(corner.dx, corner.dy)..lineTo(corner.dx, corner.dy + dy), paint);
+    }
+    final headway = state.vEgo.isFinite && state.vEgo > 1 ? distance / state.vEgo : null;
+    final label = '${distance.round()} m · ${headway == null ? "—" : headway.toStringAsFixed(1)} s';
+    final text = TextPainter(text: TextSpan(text: label,
+      style: TextStyle(color: Colors.white, fontSize: 12 * scale, fontWeight: FontWeight.w600)),
+      textDirection: TextDirection.ltr)..layout();
+    final origin = Offset(point.dx - text.width / 2, rect.bottom + 8 * scale);
+    canvas.drawRRect(RRect.fromRectAndRadius(
+      Rect.fromLTWH(origin.dx - 7 * scale, origin.dy - 4 * scale,
+        text.width + 14 * scale, text.height + 8 * scale), Radius.circular(10 * scale)),
+      Paint()..color = const Color(0xDD10191D));
+    text.paint(canvas, origin);
   }
 
   // -- projection --

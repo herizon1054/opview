@@ -25,6 +25,26 @@ class UIState extends ChangeNotifier {
   UIStatus status = UIStatus.disengaged;
   bool started = false;
 
+  // Phone-only presentation state. Never sent back to comma.
+  bool modernOverlay = true;
+  DateTime? lastModelAt;
+  DateTime? lastRadarAt;
+  double? get leadDistance {
+    if (leadOne?['status'] != true) return null;
+    if (lastRadarAt != null && DateTime.now().difference(lastRadarAt!).inMilliseconds > 2000) return null;
+    final value = leadOne?['dRel'];
+    if (value is! num || !value.isFinite || value <= 0) return null;
+    return value.toDouble();
+  }
+  // Time headway, NOT time to collision. Undefined at walking speed/stopped.
+  double? get leadHeadway => leadDistance != null && vEgo.isFinite && vEgo > 1.0
+      ? leadDistance! / vEgo : null;
+
+  double? steeringAngleDeg;
+  double? aEgo;
+  bool leftBlinker = false, rightBlinker = false;
+  bool leftBlindspot = false, rightBlindspot = false;
+
   // carState
   double vEgo = 0.0;
   double vEgoCluster = 0.0;
@@ -114,6 +134,12 @@ class UIState extends ChangeNotifier {
   // -- apply methods: one per cereal service --
 
   void applyCarState(Map<String, dynamic> data) {
+    steeringAngleDeg = _finite(data['steeringAngleDeg']);
+    aEgo = _finite(data['aEgo']);
+    leftBlinker = data['leftBlinker'] == true;
+    rightBlinker = data['rightBlinker'] == true;
+    leftBlindspot = data['leftBlindspot'] == true;
+    rightBlindspot = data['rightBlindspot'] == true;
     vEgo = (data['vEgo'] as num?)?.toDouble() ?? 0.0;
     vEgoCluster = (data['vEgoCluster'] as num?)?.toDouble() ?? 0.0;
     vCruiseCluster = (data['vCruiseCluster'] as num?)?.toDouble() ?? 0.0;
@@ -146,6 +172,7 @@ class UIState extends ChangeNotifier {
   }
 
   void applyModelV2(Map<String, dynamic> data) {
+    lastModelAt = DateTime.now();
     _fillDoubles(pathX, data['position']?['x']);
     _fillDoubles(pathY, data['position']?['y']);
     _fillDoubles(pathZ, data['position']?['z']);
@@ -184,6 +211,7 @@ class UIState extends ChangeNotifier {
   }
 
   void applyRadarState(Map<String, dynamic> data) {
+    lastRadarAt = DateTime.now();
     leadOne = data['leadOne'] as Map<String, dynamic>?;
     leadTwo = data['leadTwo'] as Map<String, dynamic>?;
     // no notify — picked up on next modelV2
@@ -230,6 +258,8 @@ class UIState extends ChangeNotifier {
 
   /// is cruise available (not -1)
   bool get isCruiseAvailable => _rawSetSpeed != -1;
+
+  double? _finite(dynamic value) => value is num && value.isFinite ? value.toDouble() : null;
 
   // -- helpers --
 

@@ -8,6 +8,14 @@
 //   2. EngagementBorder (on top of everything)
 
 import 'dart:math';
+import 'dart:async';
+import 'dashboard_hud.dart';
+import 'compact_hud.dart';
+import 'throttled_hud.dart';
+import 'vehicle_details.dart';
+import '../settings/viewer_settings_dialog.dart';
+import 'package:opview/services/viewer_settings.dart';
+import 'package:opview/services/viewer_system.dart' as system;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -28,11 +36,19 @@ const borderColors = {
 class AugmentedRoadView extends StatefulWidget {
   final UIState uiState;
   final RTCVideoRenderer? videoRenderer;
+  final bool initialRailVisible;
+  final bool showControls;
+  final ViewerSettings? settings;
+  final bool pip;
 
   const AugmentedRoadView({
     super.key,
     required this.uiState,
     this.videoRenderer,
+    this.initialRailVisible = true,
+    this.showControls = true,
+    this.settings,
+    this.pip = false,
   });
 
   @override
@@ -40,6 +56,115 @@ class AugmentedRoadView extends StatefulWidget {
 }
 
 class _AugmentedRoadViewState extends State<AugmentedRoadView> {
+  late bool _showRail;
+  bool _showDetails = false;
+  Timer? _freshnessTimer;
+  bool get _stale => !widget.uiState.isConnected ||
+      (widget.uiState.lastModelAt == null || DateTime.now()
+        .difference(widget.uiState.lastModelAt!).inMilliseconds > 2000);
+
+  @override
+  void initState() {
+    super.initState();
+    _showRail = widget.initialRailVisible;
+    // Watchdog runs on the phone, with no polling or network requests.
+    _freshnessTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted && _stale) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _freshnessTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _openSettings() async {
+    if (widget.uiState.alertSize != 0) return;
+    BuildContext? dialogContext;
+    bool closing = false;
+    void checkAlert() {
+      if ((widget.uiState.alertSize == 0 && !system.pipMode.value) || closing || dialogContext == null) return;
+      closing = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final ctx = dialogContext;
+        if (ctx != null && ctx.mounted) Navigator.of(ctx).pop();
+      });
+    }
+    widget.uiState.addListener(checkAlert);
+    system.pipMode.addListener(checkAlert);
+    try {
+      await showDialog<void>(context: context, builder: (ctx) {
+        dialogContext = ctx;
+        return ViewerSettingsDialog(settings: widget.settings!);
+      });
+    } finally {
+      dialogContext = null;
+      widget.uiState.removeListener(checkAlert);
+      system.pipMode.removeListener(checkAlert);
+    }
+  }
+
+  Widget _railButton(IconData icon, String label, VoidCallback onTap) =>
+    Padding(padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
+      child: SizedBox(width: 66, height: 62, child: Material(
+        color: const Color(0xFF182127), borderRadius: BorderRadius.circular(16),
+        child: InkWell(borderRadius: BorderRadius.circular(16), onTap: onTap,
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Icon(icon, color: dashboardTeal, size: 23), const SizedBox(height: 4),
+            Text(label, style: const TextStyle(fontSize: 10, color: Colors.white70)),
+          ])),
+      )));
+
+  Widget _rail() => Container(width: 78, color: const Color(0xFF0D151B),
+    child: SafeArea(child: SingleChildScrollView(child: Column(children: [
+      const SizedBox(height: 16),
+      Text(widget.uiState.isConnected ? '● LIVE' : '○ OFFLINE',
+        style: const TextStyle(color: dashboardTeal, fontSize: 10, fontWeight: FontWeight.bold)),
+      const SizedBox(height: 12),
+      _railButton(Icons.dashboard_outlined, widget.uiState.modernOverlay ? '儀表介面' : '原版介面', () {
+        if (widget.settings != null) {
+          widget.settings!.setLayout(widget.uiState.modernOverlay ? ViewerLayout.classic : ViewerLayout.dashboard);
+        } else {
+          setState(() { widget.uiState.modernOverlay = !widget.uiState.modernOverlay; });
+        }
+        widget.uiState.notifyNow();
+      }),
+      if (widget.uiState.isConnected && widget.uiState.alertSize == 0)
+      _railButton(Icons.info_outline, '連線資訊', () => setState(() => _showDetails = !_showDetails)),
+      _railButton(Icons.straighten, widget.uiState.isMetric ? 'km/h' : 'mph', () {
+        if (widget.settings != null) {
+          widget.settings!.setMetric(!widget.uiState.isMetric);
+        } else {
+          setState(() { widget.uiState.isMetric = !widget.uiState.isMetric; });
+        }
+        widget.uiState.notifyNow();
+      }),
+      if (widget.settings != null && widget.uiState.alertSize == 0)
+        _railButton(Icons.settings_outlined, '顯示設定', _openSettings),
+      if (widget.settings?.pictureInPicture == true && system.pipSupported.value && widget.uiState.isConnected)
+        _railButton(Icons.picture_in_picture_alt, '子母畫面', () async {
+          final entered = await system.enterPip();
+          if (!entered && mounted) ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Android 未允許進入子母畫面')));
+        }),
+      _railButton(Icons.fullscreen, '全螢幕', () => setState(() => _showRail = false)),
+    ]))));
+
+  Widget _details() => Positioned(top: 50, bottom: 20, right: 16,
+    child: Container(width: 270, padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: const Color(0xED10191D), borderRadius: BorderRadius.circular(18)),
+      child: SingleChildScrollView(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+        const Text('連線資訊', style: TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Text('傳輸：WebRTC\n相機：${widget.uiState.streamType}\n裝置：${widget.uiState.deviceType.isEmpty ? "未知" : widget.uiState.deviceType}\n校正：${widget.uiState.calStatus}\n資料：${_stale ? "等待更新" : "接收中"}\n介面運算：手機端',
+          style: const TextStyle(fontSize: 12, height: 1.6, color: Colors.white70)),
+        const SizedBox(height: 8),
+        ...widget.uiState.connectionLog.take(3).map((line) => Text(line,
+          maxLines: 2, overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 10, color: Colors.white54))),
+      ]))));
+
   // cached transform inputs — only recompute when these change
   List<double> _cachedRpyCalib = [];
   List<double> _cachedWideFromDeviceEuler = [];
@@ -57,11 +182,13 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: LayoutBuilder(builder: (context, constraints) {
+      body: Row(children: [
+        if (_showRail && widget.showControls && !widget.pip) _rail(),
+        Expanded(child: LayoutBuilder(builder: (context, constraints) {
         final screenW = constraints.maxWidth;
         final screenH = constraints.maxHeight;
         final scale = screenH / 1080.0;
-        final borderSize = uiBorderSize * scale;
+        final borderSize = (widget.pip || widget.uiState.modernOverlay ? 3 : uiBorderSize) * scale;
 
         // recompute transform only when inputs change
         final transform = _getTransform(screenW, screenH);
@@ -79,7 +206,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
             children: [
               // layer 0 + 1a: video + model overlay
               _videoLayer(),
-              ClipRect(
+              if (!_stale) ClipRect(
                 clipper: _ContentClipper(contentRect),
                 child: CustomPaint(
                   size: Size(screenW, screenH),
@@ -100,8 +227,31 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        HudRenderer(uiState: widget.uiState, scale: scale),
-                        AlertRenderer(uiState: widget.uiState, scale: scale),
+                        if (widget.pip)
+                          CompactHud(state: widget.uiState, stale: _stale)
+                        else ...[
+                          ThrottledHud(
+                            version: widget.uiState.version,
+                            every: widget.settings?.hudEvery ?? 4,
+                            invalidateKey: (screenW, screenH, _stale, widget.uiState.isMetric,
+                              widget.uiState.modernOverlay, widget.uiState.status,
+                              widget.uiState.experimentalMode, widget.uiState.alertSize,
+                              widget.uiState.leadDistance != null, widget.settings?.layout),
+                            builder: () => Stack(fit: StackFit.expand, children: [
+                              if (widget.uiState.modernOverlay)
+                                DashboardHud(state: widget.uiState, stale: _stale)
+                              else if (!_stale) HudRenderer(uiState: widget.uiState, scale: scale),
+                              if (widget.settings?.layout == ViewerLayout.detailed)
+                                VehicleDetails(state: widget.uiState, stale: _stale),
+                            ]),
+                          ),
+                        ],
+                        if (!widget.pip && _showDetails && widget.uiState.alertSize == 0) _details(),
+                        if (!widget.pip && !_showRail && widget.showControls)
+                          Positioned(top: 8, right: 8, child: IconButton(
+                            tooltip: '顯示操作列', icon: const Icon(Icons.fullscreen_exit),
+                            onPressed: () => setState(() => _showRail = true))),
+                        if (!widget.pip) AlertRenderer(uiState: widget.uiState, scale: scale),
                       ],
                     ),
                   ),
@@ -118,7 +268,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
               ),
 
               // layer 3: connecting overlay with rolling status log
-              if (!widget.uiState.isConnected)
+              if (!widget.pip && !widget.uiState.isConnected)
                 Container(
                   color: const Color(0xCC000000),
                   alignment: Alignment.center,
@@ -151,7 +301,8 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
             ],
           ),
         );
-      }),
+      })),
+      ]),
     );
   }
 

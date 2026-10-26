@@ -14,7 +14,7 @@ class TdxMarquee extends StatefulWidget {
   final double maxWidth;
   /// 捲動速度 (dp/s)
   final double speed;
-  const TdxMarquee({super.key, required this.text, this.fontSize = 14.4,   // 12.5 × 1.15
+  const TdxMarquee({super.key, required this.text, this.fontSize = 17.25,  // 12.5 × 1.15 × 1.2
     this.maxWidth = 420, this.speed = 50});
 
   @override

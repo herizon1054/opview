@@ -140,7 +140,7 @@ void main() {
       home: AugmentedRoadView(uiState: state)));
     await tester.pump();
     final text = tester.widget<Text>(find.text('目前: 施工'));
-    expect(text.style!.fontSize, closeTo(12.5 * 1.15, .1));
+    expect(text.style!.fontSize, closeTo(12.5 * 1.15 * 1.2, .1));
     // 膠囊寬度貼合文字，不是整條橫幅；且水平置中於右側畫面
     final pill = tester.getRect(find.descendant(of: find.byType(TdxMarquee),
         matching: find.byType(Container)).first);

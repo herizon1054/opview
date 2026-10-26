@@ -41,8 +41,10 @@ void main() {
       await tester.tap(find.text('全螢幕'));
       await tester.pump();
       expect(find.byIcon(Icons.fullscreen_exit), findsOneWidget);
-      await tester.tap(find.byIcon(Icons.fullscreen_exit));
+      await tester.tap(find.byIcon(Icons.fullscreen_exit), warnIfMissed: false);
       await tester.pump();
+      // 原本點擊被邊框 CustomPaint 吃掉，側欄不會回來
+      expect(find.text('全螢幕'), findsOneWidget);
       state.alertSize = 3;
       state.alertStatus = 2;
       state.alertText1 = 'TAKE CONTROL';
@@ -56,4 +58,34 @@ void main() {
       state.dispose();
     });
   }
+
+  testWidgets('exit fullscreen works while disconnected with large system font', (tester) async {
+    tester.view.physicalSize = const Size(844, 390);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 2.2;
+    addTearDown(() {
+      tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio();
+      tester.platformDispatcher.clearTextScaleFactorTestValue();
+    });
+    final state = createMockUIState()
+      ..modernOverlay = true
+      ..isConnected = false;
+    state.connectionLog.add('[00:32:32] searching for comma device…');
+    await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
+      home: AugmentedRoadView(uiState: state)));
+    expect(tester.takeException(), isNull);
+    expect(find.text('Connecting…'), findsOneWidget);
+    // 側欄標籤必須單行，不因系統字型放大而換行
+    final label = tester.getSize(find.text('○ OFFLINE'));
+    expect(label.height, lessThan(30));
+    await tester.tap(find.text('全螢幕'));
+    await tester.pump();
+    expect(find.text('全螢幕'), findsNothing);
+    await tester.tap(find.byIcon(Icons.fullscreen_exit), warnIfMissed: false);
+    await tester.pump();
+    expect(find.text('全螢幕'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    state.dispose();
+  });
 }

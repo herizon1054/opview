@@ -72,8 +72,10 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(() { tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio(); });
     final state = createMockUIState()..modernOverlay = true;
+    // 跟 app.dart 一樣用 ListenableBuilder 包起來：notifyNow() 才會觸發重建
     await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
-      home: AugmentedRoadView(uiState: state)));
+      home: ListenableBuilder(listenable: state,
+        builder: (context, _) => AugmentedRoadView(uiState: state))));
     expect(find.byIcon(Icons.directions_car_outlined), findsOneWidget);
     expect(find.text('前方車速'), findsNothing);
     expect(find.byType(TdxMarquee), findsNothing);

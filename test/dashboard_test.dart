@@ -81,7 +81,8 @@ void main() {
     expect(find.text('Connecting…'), findsOneWidget);
     // 側欄標籤：單行（不換行）且實際顯示大小 >= 13dp（不被 FittedBox 縮到看不見）
     for (final text in ['儀表介面', 'km/h', '全螢幕']) {
-      final rect = tester.getRect(find.text(text));
+      // 只找側欄按鈕（InkWell 內），儀表板的速度單位也叫 km/h
+      final rect = tester.getRect(find.descendant(of: find.byType(InkWell), matching: find.text(text)));
       expect(rect.height, inInclusiveRange(13, 30), reason: text);
       // 不可落在左側安全區內
       expect(rect.left, greaterThanOrEqualTo(45), reason: text);

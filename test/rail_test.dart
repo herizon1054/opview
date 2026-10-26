@@ -28,7 +28,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
       home: AugmentedRoadView(uiState: state, settings: settings)));
     for (final label in ['儀表介面', '連線資訊', 'km/h', 'TDX 開', '顯示設定', '子母畫面', '全螢幕']) {
-      final rect = tester.getRect(find.text(label));
+      // 只找側欄按鈕（InkWell 內），儀表板的速度單位也叫 km/h
+      final rect = tester.getRect(find.descendant(of: find.byType(InkWell), matching: find.text(label)));
       expect(rect.bottom, lessThanOrEqualTo(385), reason: label);
       expect(rect.height, greaterThanOrEqualTo(11), reason: '$label 字太小');
     }

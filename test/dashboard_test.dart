@@ -63,7 +63,11 @@ void main() {
     tester.view.physicalSize = const Size(844, 390);
     tester.view.devicePixelRatio = 1;
     tester.platformDispatcher.textScaleFactorTestValue = 2.2;
+    // 橫向時左側挖孔安全區（實機約 45dp）
+    tester.view.padding = const FakeViewPadding(left: 45);
+    tester.view.viewPadding = const FakeViewPadding(left: 45);
     addTearDown(() {
+      tester.view.resetPadding(); tester.view.resetViewPadding();
       tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio();
       tester.platformDispatcher.clearTextScaleFactorTestValue();
     });
@@ -75,9 +79,13 @@ void main() {
       home: AugmentedRoadView(uiState: state)));
     expect(tester.takeException(), isNull);
     expect(find.text('Connecting…'), findsOneWidget);
-    // 側欄標籤必須單行，不因系統字型放大而換行
-    final label = tester.getSize(find.text('○ OFFLINE'));
-    expect(label.height, lessThan(30));
+    // 側欄標籤：單行（不換行）且實際顯示大小 >= 13dp（不被 FittedBox 縮到看不見）
+    for (final text in ['儀表介面', 'km/h', '全螢幕']) {
+      final rect = tester.getRect(find.text(text));
+      expect(rect.height, inInclusiveRange(13, 30), reason: text);
+      // 不可落在左側安全區內
+      expect(rect.left, greaterThanOrEqualTo(45), reason: text);
+    }
     await tester.tap(find.text('全螢幕'));
     await tester.pump();
     expect(find.text('全螢幕'), findsNothing);

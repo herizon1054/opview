@@ -8,6 +8,17 @@ const dashboardTeal = Color(0xFF61E3D4);
 /// TDX 壅塞分級顏色。分級與 tici 相同（smooth / slow / congested），
 /// 色值改用 opview 儀表盤色系：順暢 = 主色青綠，車多 / 壅塞用低飽和琥珀 / 珊瑚，
 /// 避免 tici 的高飽和純黃、純紅在深色儀表卡片上太跳。
+/// 方向燈箭頭顏色（紅，略降亮度以配合深色儀表卡片）
+const blinkerRed = Color(0xFFF0524A);
+
+// -- 儀表卡片尺寸：比例取自 CommaView 實拍畫面（1164×668 影格量測）--
+//   卡片寬 = 畫面寬 41.2% 與 畫面高 71.9% 取小者；卡片高 = 寬 × 0.3375；
+//   底邊距 = 畫面高 3.9%；水平置中。方向燈箭頭 ≈ 卡片高 0.34，距卡片外緣約 3% 卡片寬。
+//   （opview 刻意差異：底邊距改 2%、箭頭放大一倍為 0.68，見下方常數）
+const _cardWidthOfW = .412, _cardWidthOfH = .719;
+const _cardAspect = .3375;
+const _cardBottomOfH = .02;   // CommaView 為 3.9%，依需求改 2%
+
 const tdxSmoothColor = dashboardTeal;              // tici: (128, 216, 166)
 const tdxSlowColor = Color(0xFFE2C275);            // tici: (255, 204, 0)
 const tdxCongestedColor = Color(0xFFE88A80);       // tici: (255, 100, 100)
@@ -25,9 +36,11 @@ class DashboardHud extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(builder: (context, box) {
-    // 整體再縮小 10%（原 .60 / 1.20 → .54 / 1.08 → .486 / .972，累計 81%）；
-    // 卡片內字級、圖示皆依卡片高度等比，一起縮
-    final width = math.min(box.maxWidth * .486, box.maxHeight * .972);
+    // 卡片內字級、圖示皆依卡片高度等比
+    final width = math.min(box.maxWidth * _cardWidthOfW, box.maxHeight * _cardWidthOfH);
+    final cardH = width * _cardAspect;
+    final bottom = box.maxHeight * _cardBottomOfH;
+    final cardLeft = (box.maxWidth - width) / 2;
     final status = stale ? '資料中斷' : switch (state.status) {
       UIStatus.engaged => 'ENGAGED',
       UIStatus.override_ => 'OVERRIDE',
@@ -38,7 +51,8 @@ class DashboardHud extends StatelessWidget {
     return IgnorePointer(child: Stack(children: [
       const Positioned(top: 16, left: 18, child: Text('opview',
         style: TextStyle(fontSize: 20, color: Colors.white70, fontWeight: FontWeight.w700))),
-      Positioned(left: 14, bottom: 18, child: Column(
+      // 狀態徽章：與卡片垂直置中對齊（同 CommaView）；徽章高約 26dp
+      Positioned(left: 14, bottom: bottom + math.max(0.0, (cardH - 26) / 2), child: Column(
         crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min,
         children: [
           if (state.experimentalMode && !stale)
@@ -46,10 +60,10 @@ class DashboardHud extends StatelessWidget {
           const SizedBox(height: 6), _badge(status, color),
         ],
       )),
-      Positioned(bottom: 14, left: (box.maxWidth - width) / 2, width: width,
-        height: width * .31,
+      Positioned(bottom: bottom, left: cardLeft, width: width,
+        height: cardH,
         child: DecoratedBox(decoration: BoxDecoration(
-          color: const Color(0xDC0D171C), borderRadius: BorderRadius.circular(28),
+          color: const Color(0xDC0D171C), borderRadius: BorderRadius.circular(cardH * .17),
           border: Border.all(color: const Color(0x335DE3D4))),
           child: LayoutBuilder(builder: (context, constraints) {
             final h = constraints.maxHeight;
@@ -78,8 +92,24 @@ class DashboardHud extends StatelessWidget {
             ]);
           }),
         )),
+      // 方向燈：儀表卡片左右兩側的箭頭，閃爍（carState.leftBlinker / rightBlinker）
+      if (!stale && state.leftBlinker)
+        _blinker(left: true, cardLeft: cardLeft, cardW: width, cardH: cardH, bottom: bottom),
+      if (!stale && state.rightBlinker)
+        _blinker(left: false, cardLeft: cardLeft, cardW: width, cardH: cardH, bottom: bottom),
     ]));
   });
+
+  Widget _blinker({required bool left, required double cardLeft, required double cardW,
+      required double cardH, required double bottom}) {
+    final size = cardH * .68;   // CommaView 約 .34，依需求放大一倍
+    final gap = cardW * .03;
+    return Positioned(
+      bottom: bottom, height: cardH,
+      left: left ? cardLeft - gap - size : cardLeft + cardW + gap,
+      width: size,
+      child: Center(child: BlinkerArrow(left: left, size: size)));
+  }
 
   // 右欄：有 TDX 前方車速時，小車圖示改成「前方車速」文字、下方顯示車速（依壅塞分級上色）；
   // 前車距離 / 車頭時距縮成一行保留在最下面。沒有 TDX 資料時維持原本的小車 + 距離。
@@ -146,4 +176,35 @@ class _GaugePainter extends CustomPainter {
   }
   @override
   bool shouldRepaint(_GaugePainter old) => old.speed != speed || old.maximum != maximum || old.color != color;
+}
+
+/// 方向燈箭頭：亮 / 暗交替，週期約 0.8 秒（接近實車方向燈頻率）。
+/// carState.leftBlinker / rightBlinker 在方向燈作動期間持續為 true，閃爍由這裡產生。
+class BlinkerArrow extends StatefulWidget {
+  final bool left;
+  final double size;
+  const BlinkerArrow({super.key, required this.left, required this.size});
+  @override
+  State<BlinkerArrow> createState() => _BlinkerArrowState();
+}
+
+class _BlinkerArrowState extends State<BlinkerArrow> with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this, duration: const Duration(milliseconds: 800))..repeat();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => RepaintBoundary(child: AnimatedBuilder(
+    animation: _ctrl,
+    // 前半週期亮、後半週期淡（不完全消失，維持位置感）
+    builder: (context, child) => Opacity(opacity: _ctrl.value < .5 ? 1.0 : .18, child: child),
+    child: Icon(widget.left ? Icons.keyboard_double_arrow_left_rounded
+        : Icons.keyboard_double_arrow_right_rounded,
+      color: blinkerRed, size: widget.size),
+  ));
 }

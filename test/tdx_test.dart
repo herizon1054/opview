@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:opview/selfdrive/ui/ui_state.dart';
 import 'package:opview/selfdrive/ui/onroad/augmented_road_view.dart';
 import 'package:opview/selfdrive/ui/onroad/tdx_marquee.dart';
+import 'package:opview/selfdrive/ui/onroad/blindspot_glow.dart';
+import 'package:opview/selfdrive/ui/onroad/alert_renderer.dart';
 import 'package:opview/services/impl/cereal_adapter.dart';
 import 'package:opview/services/viewer_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -126,5 +128,104 @@ void main() {
     expect(restored.tdx, isFalse);
     settings.dispose();
     restored.dispose();
+  });
+
+  testWidgets('short event: compact centered pill, small font', (tester) async {
+    tester.view.physicalSize = const Size(844, 390);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() { tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio(); });
+    final state = createMockUIState()..modernOverlay = true;
+    state.applyTdx(_tdx(events: [{'description': '施工', 'isCurrentSection': true}]));
+    await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
+      home: AugmentedRoadView(uiState: state)));
+    await tester.pump();
+    final text = tester.widget<Text>(find.text('目前: 施工'));
+    expect(text.style!.fontSize, closeTo(12.5 * 1.15, .1));
+    // 膠囊寬度貼合文字，不是整條橫幅；且水平置中於右側畫面
+    final pill = tester.getRect(find.descendant(of: find.byType(TdxMarquee),
+        matching: find.byType(Container)).first);
+    expect(pill.width, lessThan(200));
+    final view = tester.getRect(find.byType(TdxMarquee));
+    expect((pill.center.dx - view.center.dx).abs(), lessThan(2));
+    await tester.pumpWidget(const SizedBox.shrink());
+    state.dispose();
+  });
+
+  testWidgets('blinker arrows beside the dashboard card', (tester) async {
+    tester.view.physicalSize = const Size(844, 390);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() { tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio(); });
+    final state = createMockUIState()..modernOverlay = true;
+    await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
+      home: AugmentedRoadView(uiState: state)));
+    expect(find.byIcon(Icons.keyboard_double_arrow_left_rounded), findsNothing);
+    expect(find.byIcon(Icons.keyboard_double_arrow_right_rounded), findsNothing);
+    state.leftBlinker = true;
+    state.notifyNow();
+    await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
+      home: AugmentedRoadView(uiState: state)));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byIcon(Icons.keyboard_double_arrow_left_rounded), findsOneWidget);
+    expect(find.byIcon(Icons.keyboard_double_arrow_right_rounded), findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    state.dispose();
+  });
+
+  testWidgets('blindspot: edge glow per side, fast blink when same-side blinker on', (tester) async {
+    tester.view.physicalSize = const Size(844, 390);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() { tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio(); });
+    final state = createMockUIState()..modernOverlay = true;
+    Future<void> show() async {
+      await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
+        home: AugmentedRoadView(uiState: state)));
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    await show();
+    expect(find.byType(BlindspotGlow), findsNothing);
+
+    state.rightBlindspot = true;
+    await show();
+    final glow = tester.widget<BlindspotGlow>(find.byType(BlindspotGlow));
+    expect(glow.left, isFalse);
+    expect(glow.fastBlink, isFalse);
+    // 光暈貼右邊緣、只佔窄窄一段（不是整片）
+    final r = tester.getRect(find.byType(BlindspotGlow));
+    expect(r.right, closeTo(844, 4));
+    expect(r.width, lessThan(844 * .12));
+
+    state.rightBlinker = true;
+    await show();
+    expect(tester.widget<BlindspotGlow>(find.byType(BlindspotGlow)).fastBlink, isTrue);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    state.dispose();
+  });
+
+  testWidgets('events.py small alert stays stock bottom banner; TDX stays on top', (tester) async {
+    tester.view.physicalSize = const Size(844, 390);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() { tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio(); });
+    final state = createMockUIState(alertText1: 'Changing Lanes', alertSize: 1, alertStatus: 0)
+      ..modernOverlay = true;
+    state.applyTdx(_tdx(events: [{'description': '施工', 'isCurrentSection': false}]));
+    await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
+      home: AugmentedRoadView(uiState: state)));
+    await tester.pump();
+    expect(tester.getRect(find.byType(TdxMarquee)).top, lessThan(60));
+    expect(tester.getRect(find.text('Changing Lanes')).top, greaterThan(390 / 2));
+    // 儀表介面：字級 ×0.85，黑底寬度貼合文字（遠小於整條）且水平置中
+    final t = tester.widget<Text>(find.text('Changing Lanes'));
+    expect(t.style!.fontSize, closeTo(74 * (390 / 1080) * .85, .1));
+    final bg = tester.getRect(find.ancestor(of: find.text('Changing Lanes'),
+        matching: find.byType(Container)).first);
+    expect(bg.width, lessThan(844 * .6));
+    // 側欄開著，比較基準用 alert 區域本身的中心
+    final area = tester.getRect(find.byType(AlertRenderer));
+    expect((bg.center.dx - area.center.dx).abs(), lessThan(2));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    state.dispose();
   });
 }

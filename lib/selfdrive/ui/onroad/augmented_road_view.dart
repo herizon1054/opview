@@ -13,6 +13,7 @@ import 'dashboard_hud.dart';
 import 'compact_hud.dart';
 import 'throttled_hud.dart';
 import 'tdx_marquee.dart';
+import 'blindspot_glow.dart';
 import 'vehicle_details.dart';
 import '../settings/viewer_settings_dialog.dart';
 import 'package:opview/services/viewer_settings.dart';
@@ -268,8 +269,9 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
   }
 
   // 退出全螢幕按鈕：放在最外層 Stack 最上面，不會被邊框 / Connecting 遮罩吃掉點擊
-  Widget _exitFullscreenButton() => Positioned(top: 0, left: 0,
-    child: SafeArea(right: false, bottom: false, child: Padding(
+  // 放右上角：左上角是儀表介面的 "opview" 標題，放那裡會蓋住
+  Widget _exitFullscreenButton() => Positioned(top: 0, right: 0,
+    child: SafeArea(left: false, bottom: false, child: Padding(
       padding: const EdgeInsets.all(10),
       child: Material(color: const Color(0xB3182127), shape: const CircleBorder(),
         clipBehavior: Clip.antiAlias,
@@ -280,13 +282,20 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
 
   // TDX 事件跑馬燈：畫面上方。儀表介面在左上 "opview" 標題右側；
   // 原版介面放在 header（目前車速 / MAX 框）下方，避免蓋到車速
-  Widget _tdxMarquee(double scale) {
+  // TDX 路況事件：畫面上方置中小膠囊，最寬 60% 畫面寬（上限 420dp），超過才捲動。
+  // 原版介面放在 header（車速 / MAX 框）下方。
+  // events.py 的 alert 不在這裡，維持 stock AlertRenderer（small / mid 底部橫幅、full 全螢幕）。
+  Widget _tdxMarquee(double scale, double screenW) {
     final modern = widget.uiState.modernOverlay;
+    if (!widget.uiState.isConnected || widget.uiState.tdxEventText.isEmpty) {
+      return const SizedBox.shrink();
+    }
     return Positioned(
-      top: modern ? 10 : 300 * scale + 6,
-      left: modern ? 100 : 16, right: 16,
+      top: modern ? 12 : 300 * scale + 6,
+      left: 16, right: 16,
       child: IgnorePointer(child: RepaintBoundary(
-        child: TdxMarquee(text: widget.uiState.tdxEventText))));
+        child: TdxMarquee(text: widget.uiState.tdxEventText,
+          maxWidth: screenW * .6 < 420 ? screenW * .6 : 420))));
   }
 
   Widget _details() => Positioned(top: 50, bottom: 20, right: 16,
@@ -376,7 +385,8 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                               widget.uiState.experimentalMode, widget.uiState.alertSize,
                               widget.uiState.leadDistance != null, widget.settings?.layout,
                               widget.uiState.tdxNextSpeedDisplay, widget.uiState.tdxCongestion,
-                              widget.uiState.tdxEnabled),
+                              widget.uiState.tdxEnabled,
+                              widget.uiState.leftBlinker, widget.uiState.rightBlinker),
                             builder: () => Stack(fit: StackFit.expand, children: [
                               if (widget.uiState.modernOverlay)
                                 DashboardHud(state: widget.uiState, stale: _stale)
@@ -387,14 +397,24 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                           ),
                         ],
                         if (!widget.pip && _showDetails && widget.uiState.alertSize == 0) _details(),
-                        if (!widget.pip && widget.uiState.isConnected && widget.uiState.tdxEventText.isNotEmpty)
-                          _tdxMarquee(scale),
-                        if (!widget.pip) AlertRenderer(uiState: widget.uiState, scale: scale),
+                        if (!widget.pip) _tdxMarquee(scale, screenW),
+                        if (!widget.pip) AlertRenderer(uiState: widget.uiState, scale: scale,
+                          compact: widget.uiState.modernOverlay),
                       ],
                     ),
                   ),
                 ),
               ),
+
+              // layer 1c: 盲點邊緣光暈（從螢幕邊緣向內淡化）；盲點 + 同側方向燈 → 快閃
+              if (!widget.pip && !_stale && widget.uiState.leftBlindspot)
+                Positioned(left: borderSize, top: borderSize, bottom: borderSize,
+                  child: IgnorePointer(child: BlindspotGlow(left: true,
+                    fastBlink: widget.uiState.leftBlinker, width: screenW * .09))),
+              if (!widget.pip && !_stale && widget.uiState.rightBlindspot)
+                Positioned(right: borderSize, top: borderSize, bottom: borderSize,
+                  child: IgnorePointer(child: BlindspotGlow(left: false,
+                    fastBlink: widget.uiState.rightBlinker, width: screenW * .09))),
 
               // layer 2: engagement border — always visible
               // IgnorePointer: 無 child 的 CustomPaint 預設 hitTest 為 true，

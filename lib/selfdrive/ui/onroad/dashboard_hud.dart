@@ -25,8 +25,9 @@ class DashboardHud extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => LayoutBuilder(builder: (context, box) {
-    // 整體縮小 10%（原 .60 / 1.20）；卡片內字級、圖示皆依卡片高度等比，一起縮
-    final width = math.min(box.maxWidth * .54, box.maxHeight * 1.08);
+    // 整體再縮小 10%（原 .60 / 1.20 → .54 / 1.08 → .486 / .972，累計 81%）；
+    // 卡片內字級、圖示皆依卡片高度等比，一起縮
+    final width = math.min(box.maxWidth * .486, box.maxHeight * .972);
     final status = stale ? '資料中斷' : switch (state.status) {
       UIStatus.engaged => 'ENGAGED',
       UIStatus.override_ => 'OVERRIDE',

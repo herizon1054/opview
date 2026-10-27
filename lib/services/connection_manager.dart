@@ -16,6 +16,7 @@ import 'package:opview/services/discovery.dart';
 import 'package:opview/services/transport.dart';
 import 'package:opview/services/adapter.dart';
 import 'package:opview/services/impl/mdns_discovery.dart';
+import 'package:opview/services/impl/subnet_scan_discovery.dart';
 import 'package:opview/services/impl/webrtc_transport.dart';
 import 'package:opview/services/impl/cereal_adapter.dart';
 import 'package:opview/services/wake_lock_service.dart' as wake_lock;
@@ -48,7 +49,8 @@ class ConnectionManager {
     Discovery? discovery,
     Transport? transport,
     TelemetryAdapter? adapter,
-  })  : _discovery = discovery ?? MdnsDiscovery(),
+  })  : // mDNS 為主；手機開熱點時 mDNS 常失效，3 秒後同時掃描本機各介面 /24 的 port 5001 作為備援
+        _discovery = discovery ?? CompositeDiscovery([MdnsDiscovery(), SubnetScanDiscovery()]),
         _transport = transport ?? WebRTCTransport(),
         _adapter = adapter ?? CerealAdapter();
 

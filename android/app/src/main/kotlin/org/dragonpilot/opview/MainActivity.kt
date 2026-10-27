@@ -1,6 +1,11 @@
 package org.dragonpilot.opview
 
 import android.app.AppOpsManager
+import android.content.ContentValues
+import android.content.Intent
+import android.os.Environment
+import android.provider.MediaStore
+import java.io.File
 import android.os.Process
 import android.app.PictureInPictureParams
 import android.content.pm.PackageManager
@@ -60,6 +65,40 @@ class MainActivity: FlutterActivity() {
         systemChannel?.invokeMethod("pipChanged", isInPictureInPictureMode)
     }
 
+    private val LOG_CHANNEL = "org.dragonpilot.opview/log"
+
+    // Android 10+：存到「下載/opview/」（MediaStore，不需權限），再用該 content:// URI 分享
+    // Android 9 以下：分享最後 100 KB 文字
+    private fun shareLog(f: File): String {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, f.name)
+                put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/opview")
+            }
+            val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: return "error: MediaStore insert failed"
+            contentResolver.openOutputStream(uri)?.use { out -> f.inputStream().use { it.copyTo(out) } }
+                ?: return "error: open output failed"
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, f.name)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, "分享 opview log"))
+            return "ok:下載/opview/${f.name}"
+        }
+        val text = f.readText().takeLast(100_000)
+        val send = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, f.name)
+            putExtra(Intent.EXTRA_TEXT, text)
+        }
+        startActivity(Intent.createChooser(send, "分享 opview log"))
+        return "text"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -78,6 +117,34 @@ class MainActivity: FlutterActivity() {
                 result.success(null)
             } else {
                 result.notImplemented()
+            }
+        }
+
+        // opview log：私有目錄、裝置資訊、分享
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, LOG_CHANNEL).setMethodCallHandler { call, result ->
+            when (call.method) {
+                "dir" -> result.success(filesDir.absolutePath)
+                "info" -> {
+                    val m = HashMap<String, Any>()
+                    m["manufacturer"] = Build.MANUFACTURER
+                    m["model"] = Build.MODEL
+                    m["release"] = Build.VERSION.RELEASE
+                    m["sdk"] = Build.VERSION.SDK_INT
+                    try {
+                        val pi = packageManager.getPackageInfo(packageName, 0)
+                        m["version"] = pi.versionName ?: "?"
+                        @Suppress("DEPRECATION")
+                        m["build"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) pi.longVersionCode else pi.versionCode.toLong()
+                    } catch (e: Exception) { }
+                    result.success(m)
+                }
+                "share" -> {
+                    val path = call.arguments as? String
+                    if (path == null) { result.success("error"); return@setMethodCallHandler }
+                    try { result.success(shareLog(File(path))) }
+                    catch (e: Exception) { result.success("error: ${e.message}") }
+                }
+                else -> result.notImplemented()
             }
         }
 

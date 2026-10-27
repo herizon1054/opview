@@ -7,6 +7,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:opview/system/webrtc/webrtcd_api.dart';
 
@@ -29,6 +30,10 @@ class WebRTCClient {
   Future<void> init() async {
     if (_initialized) return;
     await videoRenderer.initialize();
+    // 解出影像（或解析度改變）時觸發：log 裡看得到「有沒有真的出畫面」
+    videoRenderer.onResize = () {
+      debugPrint('[opview] video frame ${videoRenderer.videoWidth}x${videoRenderer.videoHeight}');
+    };
     _initialized = true;
   }
 
@@ -55,6 +60,7 @@ class WebRTCClient {
 
     // video: recvonly
     _pc!.onTrack = (event) {
+      debugPrint('[opview] webrtc track ${event.track.kind} (streams: ${event.streams.length})');
       if (event.track.kind == 'video' && event.streams.isNotEmpty) {
         videoRenderer.srcObject = event.streams[0];
       }
@@ -62,7 +68,12 @@ class WebRTCClient {
 
     // connection state changes — ignore if superseded
     _pc!.onConnectionState = (state) {
-      if (gen == _connectGen) _stateController.add(state);
+      if (gen != _connectGen) return;
+      debugPrint('[opview] webrtc pc ${state.name}');
+      _stateController.add(state);
+    };
+    _pc!.onIceConnectionState = (state) {
+      if (gen == _connectGen) debugPrint('[opview] webrtc ice ${state.name}');
     };
 
     // add recvonly video transceiver
@@ -81,6 +92,7 @@ class WebRTCClient {
     // exchange SDP with webrtcd
     final answer = await postStream(host, offer.sdp!, camera: camera);
     if (gen != _connectGen) return;
+    debugPrint('[opview] webrtc answer received');
     await _pc!.setRemoteDescription(
       RTCSessionDescription(answer['sdp'] as String, answer['type'] as String),
     );
@@ -94,6 +106,7 @@ class WebRTCClient {
 
   /// listen on data channel for cereal messages
   void _setupDataChannel(RTCDataChannel dc) {
+    dc.onDataChannelState = (s) => debugPrint('[opview] data channel ${dc.label} ${s.name}');
     dc.onMessage = (msg) {
       try {
         final text = msg.isBinary ? utf8.decode(msg.binary) : msg.text;

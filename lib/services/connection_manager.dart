@@ -16,6 +16,7 @@ import 'package:opview/services/discovery.dart';
 import 'package:opview/services/transport.dart';
 import 'package:opview/services/adapter.dart';
 import 'package:opview/services/impl/mdns_discovery.dart';
+import 'package:opview/services/impl/subnet_scan_discovery.dart';
 import 'package:opview/services/impl/webrtc_transport.dart';
 import 'package:opview/services/impl/cereal_adapter.dart';
 import 'package:opview/services/wake_lock_service.dart' as wake_lock;
@@ -48,7 +49,8 @@ class ConnectionManager {
     Discovery? discovery,
     Transport? transport,
     TelemetryAdapter? adapter,
-  })  : _discovery = discovery ?? MdnsDiscovery(),
+  })  : // mDNS 為主；手機開熱點時 mDNS 常失效，3 秒後同時掃描本機各介面 /24 的 port 5001 作為備援
+        _discovery = discovery ?? CompositeDiscovery([MdnsDiscovery(), SubnetScanDiscovery()]),
         _transport = transport ?? WebRTCTransport(),
         _adapter = adapter ?? CerealAdapter();
 
@@ -69,6 +71,11 @@ class ConnectionManager {
   static const _maxRetries = 3;
   String _streamType = 'road';
 
+  // log：每 10 秒記錄各 service 收到的訊息數（判斷資料有沒有進來、tdx 有沒有在發）
+  static final _typeRe = RegExp(r'"type":\s*"(\w+)"');
+  final Map<String, int> _rxCounts = {};
+  Timer? _statsTimer;
+
   /// update status line shown on the connecting overlay
   void _setStatus(String msg) {
     final now = DateTime.now();
@@ -84,6 +91,7 @@ class ConnectionManager {
   /// tries cached host first for fast reconnect, mDNS in parallel as fallback
   void start() async {
     _listenConnectivity();
+    _logNetwork();
 
     final cachedHost = await _loadCachedHost();
     if (cachedHost != null && await _isOnSameSubnet(cachedHost)) {
@@ -105,8 +113,10 @@ class ConnectionManager {
     _connectivitySub?.cancel();
     _connectivitySub = _connectivity.onConnectivityChanged.listen((result) {
       final hasWifi = result.contains(ConnectivityResult.wifi);
+      debugPrint('[opview] connectivity: ${result.map((r) => r.name).join(',')}');
       if (hasWifi && !_hadWifi) {
         _setStatus('WiFi connected, searching…');
+        _logNetwork();
         _hadWifi = true;
         if (_host == null && !_paused) {
           _startDiscovery();
@@ -158,6 +168,7 @@ class ConnectionManager {
       _listenData();
       _listenState();
       _setConnected(true);
+      _startStats();
       _stopDiscovery(); // connected — stop any parallel mDNS
       _saveCachedHost(_host!);
       _setStatus('connected');
@@ -170,10 +181,40 @@ class ConnectionManager {
     }
   }
 
+  /// 本機網路介面快照（熱點 / WiFi 網段判斷用）
+  Future<void> _logNetwork() async {
+    try {
+      final ifaces = await NetworkInterface.list(type: InternetAddressType.IPv4, includeLoopback: false);
+      final desc = ifaces.map((i) => '${i.name}=${i.addresses.map((a) => a.address).join('/')}').join(', ');
+      debugPrint('[opview] net: ${desc.isEmpty ? '(none)' : desc}');
+    } catch (e) {
+      debugPrint('[opview] net: list failed $e');
+    }
+  }
+
+  void _startStats() {
+    _statsTimer?.cancel();
+    _rxCounts.clear();
+    _statsTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      final keys = _rxCounts.keys.toList()..sort();
+      debugPrint('[opview] rx 10s: ${keys.isEmpty ? '(none)' : keys.map((k) => '$k=${_rxCounts[k]}').join(' ')}');
+      _rxCounts.clear();
+    });
+  }
+
+  void _stopStats() {
+    _statsTimer?.cancel();
+    _statsTimer = null;
+  }
+
   /// listen to data channel → adapter → UIState
   void _listenData() {
     _dataSub?.cancel();
     _dataSub = _transport.dataStream.listen((chunk) {
+      for (final m in _typeRe.allMatches(chunk)) {
+        final t = m.group(1)!;
+        _rxCounts[t] = (_rxCounts[t] ?? 0) + 1;
+      }
       _adapter.apply(_uiState, chunk);
       _switchStreamIfNeeded();
     });
@@ -233,6 +274,7 @@ class ConnectionManager {
     _dataSub?.cancel();
     _stateSub?.cancel();
     _stateSub = null;
+    _stopStats();
     _adapter.reset();
     _connecting = false;
     _reconnecting = false;
@@ -249,6 +291,7 @@ class ConnectionManager {
     _dataSub?.cancel();
     _stateSub?.cancel();
     _stateSub = null;
+    _stopStats();
     _adapter.reset();
     _transport.close();  // free server-side session
     _setConnected(false);

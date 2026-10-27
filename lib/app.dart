@@ -94,6 +94,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    debugPrint('[opview] lifecycle ${state.name}');
     _lifecycle = state;
     final epoch = ++_lifecycleEpoch;
     if (state == AppLifecycleState.resumed && _streamPaused) {

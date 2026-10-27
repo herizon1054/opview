@@ -386,7 +386,8 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                               widget.uiState.leadDistance != null, widget.settings?.layout,
                               widget.uiState.tdxNextSpeedDisplay, widget.uiState.tdxCongestion,
                               widget.uiState.tdxEnabled,
-                              widget.uiState.leftBlinker, widget.uiState.rightBlinker),
+                              widget.uiState.leftBlinker, widget.uiState.rightBlinker,
+                              widget.uiState.gearShifter),
                             builder: () => Stack(fit: StackFit.expand, children: [
                               if (widget.uiState.modernOverlay)
                                 DashboardHud(state: widget.uiState, stale: _stale)

@@ -230,4 +230,57 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     state.dispose();
   });
+
+  test('gearShifter parsing (string / enum index)', () {
+    final s = UIState();
+    s.applyCarState({'gearShifter': 'park'});
+    expect(s.inPark, isTrue);
+    s.applyCarState({'gearShifter': 'drive'});
+    expect(s.inPark, isFalse);
+    s.applyCarState({'gearShifter': 1});
+    expect(s.inPark, isTrue);
+    s.applyCarState({});
+    expect(s.gearShifter, 'unknown');
+    s.dispose();
+  });
+
+  testWidgets('gear P/R/N: gauge number becomes colored letter', (tester) async {
+    tester.view.physicalSize = const Size(844, 390);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(() { tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio(); });
+    final state = createMockUIState(vEgo: 0)..modernOverlay = true;
+    await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
+      home: ListenableBuilder(listenable: state,
+        builder: (context, _) => AugmentedRoadView(uiState: state))));
+    expect(find.text('P'), findsNothing);
+    expect(find.text('0'), findsOneWidget);
+
+    state.gearShifter = 'park';
+    state.notifyNow();
+    await tester.pump();
+    final p = tester.widget<Text>(find.text('P'));
+    expect(p.style!.color, const Color(0xFFF0524A));
+    expect(find.text('0'), findsNothing);
+
+    // R 綠、N 白
+    state.gearShifter = 'reverse';
+    state.notifyNow();
+    await tester.pump();
+    expect(tester.widget<Text>(find.text('R')).style!.color, const Color(0xFF6BD98A));
+    state.gearShifter = 'neutral';
+    state.notifyNow();
+    await tester.pump();
+    expect(tester.widget<Text>(find.text('N')).style!.color, Colors.white);
+    expect(find.text('0'), findsNothing);
+
+    state.gearShifter = 'drive';
+    state.notifyNow();
+    await tester.pump();
+    expect(find.text('P'), findsNothing);
+    expect(find.text('R'), findsNothing);
+    expect(find.text('N'), findsNothing);
+    expect(find.text('0'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+    state.dispose();
+  });
 }

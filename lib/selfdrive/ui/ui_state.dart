@@ -45,6 +45,20 @@ class UIState extends ChangeNotifier {
   bool leftBlinker = false, rightBlinker = false;
   bool leftBlindspot = false, rightBlindspot = false;
 
+  // carState.gearShifter（car.capnp enum GearShifter：unknown / park / drive / neutral /
+  // reverse / sport / low / brake / eco / manumatic）。pycapnp to_dict 給名稱字串。
+  String gearShifter = 'unknown';
+  static const _gearNames = ['unknown', 'park', 'drive', 'neutral', 'reverse',
+    'sport', 'low', 'brake', 'eco', 'manumatic'];
+  bool get inPark => gearShifter == 'park';
+  /// 儀表板碼表中間改顯示的擋位字母；D / S / L 等行駛擋回傳 null（照常顯示車速）
+  String? get gearLetter => switch (gearShifter) {
+    'park' => 'P',
+    'reverse' => 'R',
+    'neutral' => 'N',
+    _ => null,
+  };
+
   // carState
   double vEgo = 0.0;
   double vEgoCluster = 0.0;
@@ -205,6 +219,9 @@ class UIState extends ChangeNotifier {
     rightBlinker = data['rightBlinker'] == true;
     leftBlindspot = data['leftBlindspot'] == true;
     rightBlindspot = data['rightBlindspot'] == true;
+    final gear = data['gearShifter'];
+    gearShifter = gear is String ? gear
+        : gear is int && gear >= 0 && gear < _gearNames.length ? _gearNames[gear] : 'unknown';
     vEgo = (data['vEgo'] as num?)?.toDouble() ?? 0.0;
     vEgoCluster = (data['vEgoCluster'] as num?)?.toDouble() ?? 0.0;
     vCruiseCluster = (data['vCruiseCluster'] as num?)?.toDouble() ?? 0.0;

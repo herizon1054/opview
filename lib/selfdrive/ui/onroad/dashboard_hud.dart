@@ -10,6 +10,15 @@ const dashboardTeal = Color(0xFF61E3D4);
 /// 避免 tici 的高飽和純黃、純紅在深色儀表卡片上太跳。
 /// 方向燈箭頭顏色（紅，略降亮度以配合深色儀表卡片）
 const blinkerRed = Color(0xFFF0524A);
+/// 擋位字母顏色：P 紅（與方向燈箭頭同色）、R 綠（略降飽和配合深色卡片）、N 白
+const parkRed = blinkerRed;
+const reverseGreen = Color(0xFF6BD98A);
+const neutralWhite = Colors.white;
+Color gearColor(String letter) => switch (letter) {
+  'P' => parkRed,
+  'R' => reverseGreen,
+  _ => neutralWhite,
+};
 
 // -- 儀表卡片尺寸：比例取自 CommaView 實拍畫面（1164×668 影格量測）--
 //   卡片寬 = 畫面寬 41.2% 與 畫面高 71.9% 取小者；卡片高 = 寬 × 0.3375；
@@ -78,10 +87,18 @@ class DashboardHud extends StatelessWidget {
                 painter: _GaugePainter(stale ? 0 : state.displaySpeed,
                   state.isMetric ? 160 : 100, color),
                 child: Center(child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
-                  Text(stale ? '—' : '${state.displaySpeed.round()}',
-                    style: TextStyle(fontSize: h * .42, fontWeight: FontWeight.w700, height: 1)),
-                  Text(state.isMetric ? 'km/h' : 'mph',
-                    style: TextStyle(fontSize: h * .10, color: Colors.white70)),
+                  // P / R / N 檔：車速數字改成擋位大寫字母（P 紅、R 綠、N 白），
+                  // 單位隱藏（高度用透明佔位，版面不跳動）
+                  if (!stale && state.gearLetter != null) ...[
+                    Text(state.gearLetter!, style: TextStyle(fontSize: h * .42,
+                      fontWeight: FontWeight.w800, height: 1, color: gearColor(state.gearLetter!))),
+                    Text(' ', style: TextStyle(fontSize: h * .10)),
+                  ] else ...[
+                    Text(stale ? '—' : '${state.displaySpeed.round()}',
+                      style: TextStyle(fontSize: h * .42, fontWeight: FontWeight.w700, height: 1)),
+                    Text(state.isMetric ? 'km/h' : 'mph',
+                      style: TextStyle(fontSize: h * .10, color: Colors.white70)),
+                  ],
                   SizedBox(height: h * .09),
                   Text(stale ? 'TELEMETRY STALE' : 'LIVE TELEMETRY',
                     style: TextStyle(fontSize: h * .065, color: color, letterSpacing: 1.3)),

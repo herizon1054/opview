@@ -11,6 +11,15 @@ class WebRTCTransport implements Transport {
   final _stateController = StreamController<TransportState>.broadcast();
 
   StreamSubscription? _clientStateSub;
+  TransportState _state = TransportState.disconnected;
+
+  @override
+  TransportState get currentState => _state;
+
+  void _emit(TransportState s) {
+    _state = s;
+    _stateController.add(s);
+  }
 
   @override
   Stream<String> get dataStream => _client.dataStream;
@@ -25,16 +34,19 @@ class WebRTCTransport implements Transport {
   Future<void> connect(String host, {String camera = 'road'}) async {
     // Listen to WebRTC connection state and translate to TransportState
     _clientStateSub?.cancel();
+    _state = TransportState.connecting;
     _clientStateSub = _client.stateStream.listen((state) {
       switch (state) {
         case RTCPeerConnectionState.RTCPeerConnectionStateConnecting:
-          _stateController.add(TransportState.connecting);
+          _emit(TransportState.connecting);
         case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
-          _stateController.add(TransportState.connected);
-        case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
+          _emit(TransportState.connected);
+        // opview：disconnected 常是暫時的（WebRTC 會自行恢復），交給 ConnectionManager 寬限處理
         case RTCPeerConnectionState.RTCPeerConnectionStateDisconnected:
+          _emit(TransportState.disconnected);
+        case RTCPeerConnectionState.RTCPeerConnectionStateFailed:
         case RTCPeerConnectionState.RTCPeerConnectionStateClosed:
-          _stateController.add(TransportState.failed);
+          _emit(TransportState.failed);
         default:
           break;
       }
@@ -44,7 +56,11 @@ class WebRTCTransport implements Transport {
   }
 
   @override
+  Future<String?> statsSummary() => _client.statsSummary();
+
+  @override
   Future<void> close() async {
+    _state = TransportState.disconnected;
     _clientStateSub?.cancel();
     _clientStateSub = null;
     await _client.close();

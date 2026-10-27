@@ -75,6 +75,13 @@ class WebRTCClient {
     _pc!.onIceConnectionState = (state) {
       if (gen == _connectGen) debugPrint('[opview] webrtc ice ${state.name}');
     };
+    // 手機端 ICE 候選位址（判斷熱點介面有沒有被 WebRTC 使用）
+    _pc!.onIceCandidate = (c) {
+      if (gen != _connectGen) return;
+      final s = c.candidate ?? '';
+      final m = RegExp(r'candidate:\S+ \d+ (\w+) \d+ (\S+) (\d+) typ (\w+)').firstMatch(s);
+      debugPrint('[opview] ice local ${m == null ? s : '${m.group(4)} ${m.group(2)}:${m.group(3)}/${m.group(1)}'}');
+    };
 
     // add recvonly video transceiver
     await _pc!.addTransceiver(
@@ -96,6 +103,40 @@ class WebRTCClient {
     await _pc!.setRemoteDescription(
       RTCSessionDescription(answer['sdp'] as String, answer['type'] as String),
     );
+  }
+
+  /// WebRTC 統計摘要（log 用）：實際使用的網路位址、影像收包/解碼數
+  Future<String?> statsSummary() async {
+    final pc = _pc;
+    if (pc == null) return null;
+    try {
+      final reports = await pc.getStats();
+      final byId = {for (final r in reports) r.id: r};
+      String? pair;
+      String? video;
+      for (final r in reports) {
+        final v = r.values;
+        if (r.type == 'candidate-pair' && (v['nominated'] == true || v['nominated'] == 'true') &&
+            '${v['state']}' == 'succeeded') {
+          String ep(String? id) {
+            final c = id == null ? null : byId[id]?.values;
+            if (c == null) return '?';
+            return '${c['candidateType'] ?? '?'} ${c['address'] ?? c['ip'] ?? '?'}:${c['port'] ?? '?'}'
+                '${c['networkType'] != null ? ' ${c['networkType']}' : ''}';
+          }
+          pair = 'pair ${ep(v['localCandidateId']?.toString())} -> ${ep(v['remoteCandidateId']?.toString())}'
+              ' rtt=${v['currentRoundTripTime'] ?? '?'}';
+        }
+        if (r.type == 'inbound-rtp' && ('${v['kind'] ?? v['mediaType']}' == 'video')) {
+          video = 'video rx=${v['bytesReceived'] ?? '?'}B pkts=${v['packetsReceived'] ?? '?'} lost=${v['packetsLost'] ?? '?'}'
+              ' frames rx=${v['framesReceived'] ?? '?'} dec=${v['framesDecoded'] ?? '?'} drop=${v['framesDropped'] ?? '?'}'
+              ' ${v['frameWidth'] ?? '?'}x${v['frameHeight'] ?? '?'} kf=${v['keyFramesDecoded'] ?? '?'}';
+        }
+      }
+      return '${pair ?? 'pair (none succeeded)'} | ${video ?? 'video (no inbound-rtp)'}';
+    } catch (e) {
+      return 'stats failed: $e';
+    }
   }
 
   /// close current connection without disposing renderer

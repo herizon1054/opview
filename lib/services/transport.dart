@@ -19,12 +19,18 @@ abstract class Transport {
   /// Stream of connection state changes
   Stream<TransportState> get stateStream;
 
+  /// Latest connection state (so callers that subscribe late don't miss it)
+  TransportState get currentState;
+
   /// Video renderer (if supported by transport)
   /// Returns null if transport doesn't support video
   dynamic get videoRenderer;
 
   /// Connect to a host
   Future<void> connect(String host, {String camera = 'road'});
+
+  /// Connection statistics summary for logging (null if unsupported / not connected)
+  Future<String?> statsSummary();
 
   /// Close current connection
   Future<void> close();

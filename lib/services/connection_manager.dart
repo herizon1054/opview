@@ -26,6 +26,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 // retry config
 const _retryDelay = Duration(seconds: 2);
 
+// signaling（POST /stream）成功後，等 WebRTC 真正連通（ICE/DTLS）的上限
+const _mediaConnectTimeout = Duration(seconds: 12);
+
+// WebRTC 進入 disconnected 後的寬限時間（常會自行恢復），逾時才重連
+const _disconnectGrace = Duration(seconds: 5);
+
 // delay before re-discovery after all retries exhausted
 const _rediscoverDelay = Duration(seconds: 15);
 
@@ -75,6 +81,7 @@ class ConnectionManager {
   static final _typeRe = RegExp(r'"type":\s*"(\w+)"');
   final Map<String, int> _rxCounts = {};
   Timer? _statsTimer;
+  Timer? _graceTimer;
 
   /// update status line shown on the connecting overlay
   void _setStatus(String msg) {
@@ -164,6 +171,16 @@ class ConnectionManager {
       _setStatus('connecting to $_host (camera: $_streamType)');
       await _transport.connect(_host!, camera: _streamType);
       if (epoch != _connectEpoch) return; // superseded by newer connect
+      // signaling 成功不代表影像/資料通道通了：等 WebRTC 真正 connected 才算連線
+      _setStatus('signaling ok, waiting for WebRTC media path…');
+      final ok = await _waitMediaConnected(_mediaConnectTimeout);
+      if (epoch != _connectEpoch) return;
+      if (!ok) {
+        _setStatus('WebRTC failed: no media path to $_host '
+            '(state ${_transport.currentState.name}, ${_mediaConnectTimeout.inSeconds}s)');
+        _scheduleReconnect();
+        return;
+      }
       _retryCount = 0;
       _listenData();
       _listenState();
@@ -181,6 +198,24 @@ class ConnectionManager {
     }
   }
 
+  Future<bool> _waitMediaConnected(Duration timeout) async {
+    if (_transport.currentState == TransportState.connected) return true;
+    if (_transport.currentState == TransportState.failed) return false;
+    final done = Completer<bool>();
+    final sub = _transport.stateStream.listen((s) {
+      if (done.isCompleted) return;
+      if (s == TransportState.connected) done.complete(true);
+      if (s == TransportState.failed) done.complete(false);
+    });
+    try {
+      // 訂閱前就已經變化的情況
+      if (_transport.currentState == TransportState.connected) return true;
+      return await done.future.timeout(timeout, onTimeout: () => false);
+    } finally {
+      await sub.cancel();
+    }
+  }
+
   /// 本機網路介面快照（熱點 / WiFi 網段判斷用）
   Future<void> _logNetwork() async {
     try {
@@ -195,10 +230,12 @@ class ConnectionManager {
   void _startStats() {
     _statsTimer?.cancel();
     _rxCounts.clear();
-    _statsTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+    _statsTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
       final keys = _rxCounts.keys.toList()..sort();
       debugPrint('[opview] rx 10s: ${keys.isEmpty ? '(none)' : keys.map((k) => '$k=${_rxCounts[k]}').join(' ')}');
       _rxCounts.clear();
+      final s = await _transport.statsSummary();
+      if (s != null) debugPrint('[opview] webrtc stats: $s');
     });
   }
 
@@ -252,8 +289,24 @@ class ConnectionManager {
     _stateSub?.cancel();
     _stateSub = _transport.stateStream.listen((state) {
       if (state == TransportState.failed) {
+        _graceTimer?.cancel();
+        _graceTimer = null;
         _setStatus('connection lost');
         _scheduleReconnect();
+      } else if (state == TransportState.disconnected) {
+        if (_graceTimer != null) return;
+        _setStatus('WebRTC disconnected, waiting ${_disconnectGrace.inSeconds}s to recover…');
+        _graceTimer = Timer(_disconnectGrace, () {
+          _graceTimer = null;
+          if (_transport.currentState != TransportState.connected) {
+            _setStatus('connection lost (no recovery in ${_disconnectGrace.inSeconds}s)');
+            _scheduleReconnect();
+          }
+        });
+      } else if (state == TransportState.connected && _graceTimer != null) {
+        _graceTimer!.cancel();
+        _graceTimer = null;
+        _setStatus('WebRTC recovered');
       }
     });
   }
@@ -274,6 +327,8 @@ class ConnectionManager {
     _dataSub?.cancel();
     _stateSub?.cancel();
     _stateSub = null;
+    _graceTimer?.cancel();
+    _graceTimer = null;
     _stopStats();
     _adapter.reset();
     _connecting = false;
@@ -291,6 +346,8 @@ class ConnectionManager {
     _dataSub?.cancel();
     _stateSub?.cancel();
     _stateSub = null;
+    _graceTimer?.cancel();
+    _graceTimer = null;
     _stopStats();
     _adapter.reset();
     _transport.close();  // free server-side session

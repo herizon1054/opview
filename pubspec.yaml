@@ -15,6 +15,12 @@ dependencies:
   connectivity_plus: ^7.0.0
   shared_preferences: ^2.3.0
 
+# opview patch：使用專案內修改過的 flutter_webrtc 1.3.0（停用 Android network monitor，
+# 讓手機當熱點時 WebRTC 能使用熱點介面）。說明見 third_party/flutter_webrtc/OPVIEW_PATCH_zh-TW.md
+dependency_overrides:
+  flutter_webrtc:
+    path: third_party/flutter_webrtc
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

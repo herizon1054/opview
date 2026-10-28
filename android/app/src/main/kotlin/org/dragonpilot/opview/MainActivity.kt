@@ -10,6 +10,8 @@ import android.os.Process
 import android.app.PictureInPictureParams
 import android.content.pm.PackageManager
 import android.content.res.Configuration
+import android.media.MediaCodecInfo
+import android.media.MediaCodecList
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
@@ -137,6 +139,25 @@ class MainActivity: FlutterActivity() {
                         m["build"] = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) pi.longVersionCode else pi.versionCode.toLong()
                     } catch (e: Exception) { }
                     result.success(m)
+                }
+                // 手機 H.264 解碼器能力（判斷硬體解碼器能不能吃 comma 的 1928×1208 串流）
+                "codecs" -> {
+                    val w = (call.argument<Int>("width")) ?: 1928
+                    val h = (call.argument<Int>("height")) ?: 1208
+                    val out = ArrayList<String>()
+                    try {
+                        for (ci in MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos) {
+                            if (ci.isEncoder || !ci.supportedTypes.any { it.equals("video/avc", true) }) continue
+                            val vc = ci.getCapabilitiesForType("video/avc").videoCapabilities
+                            val hw = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                                (if (ci.isHardwareAccelerated) "hw" else "sw") else "?"
+                            out.add("${ci.name} [$hw] 寬 ${vc.supportedWidths} 高 ${vc.supportedHeights} " +
+                                "對齊 ${vc.widthAlignment}x${vc.heightAlignment} " +
+                                "${w}x${h}=${vc.isSizeSupported(w, h)} " +
+                                "${w}x${h}@20fps=${vc.areSizeAndRateSupported(w, h, 20.0)}")
+                        }
+                    } catch (e: Exception) { out.add("查詢失敗：${e.message}") }
+                    result.success(out)
                 }
                 "share" -> {
                     val path = call.arguments as? String

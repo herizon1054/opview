@@ -139,3 +139,10 @@ flutter build apk --release
   - `pubspec.yaml` 加 `logger: ^2.6.2`（原本即為 flutter_webrtc 的間接依賴，版本 2.6.2）
 - `webrtc_client.dart`：影像 renderer 改在 webrtcd 回 answer 之後才建立；comma 沒開 webrtcd（Connection refused）時的重試
   不再每次建立 / 釋放 Flutter 畫布（實測 11 分鐘重試建了 30 個）。onTrack 早於 renderer 建立時先暫存 stream。
+- 2026-10-29 01:36 實測原生 log 找到原因：`c2.qti.avc.decoder` 在 `MediaCodec.configure()` 拋 `IllegalArgumentException`
+  （`AndroidVideoDecoder.initDecodeInternal` → `initDecode failed` → `Decoder falling back to software decoding`）。
+  「Trying to create decoder for unsupported format」是 libwebrtc 內建軟體解碼器不含 H.264 的正常訊息，與失敗無關。
+  推測：該機高通解碼器不支援 1928×1208（超過 1920×1088）。App 啟動時新增 `codec ...` 行（MainActivity `codecs`）
+  記錄每個 H.264 解碼器的寬高範圍與 `1928x1208=true/false`，用來確認。
+- 原生 log 濾掉每次建 PeerConnection 都會出現的無關訊息（duplicate codecs 等）。
+

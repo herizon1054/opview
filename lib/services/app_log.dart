@@ -58,6 +58,15 @@ class AppLog {
         _writeRaw(l);
       }
       _pending.clear();
+      // H.264 解碼器能力：c2.qti 若不支援 1928×1208，WebRTC 會退回軟體解碼（每幀約 120 ms）
+      try {
+        final codecs = await _channel.invokeListMethod<String>('codecs', {'width': 1928, 'height': 1208});
+        for (final c in codecs ?? const <String>[]) {
+          _writeRaw('codec $c');
+        }
+      } catch (e) {
+        _writeRaw('codec 查詢失敗：$e');
+      }
     } on MissingPluginException {
       // 非 Android（測試 / iOS）：只保留 debugPrint
     } on PlatformException {

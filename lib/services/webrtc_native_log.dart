@@ -21,6 +21,10 @@ class WebrtcNativeLog {
   static final _important = RegExp(
       r'decod|codec|fallback|h264|avc|mediacodec|c2\.|surface|egl|texture|frame',
       caseSensitive: false);
+  // 每次建 PeerConnection 都會出現、與問題無關的訊息
+  static final _ignore = RegExp(
+      r'Factory produced duplicate codecs|DataChannelObserver - adapter needed|'
+      r'Accepting maxRetransmit|Not adding candidate because the JsepTransport');
   static const _window = Duration(seconds: 10);
   static const _maxImportant = 60;
   static const _maxOther = 8;
@@ -49,6 +53,7 @@ class WebrtcNativeLog {
       _skipped = 0;
     }
     final text = line.startsWith('webrtc: ') ? line.substring(8) : line;
+    if (_ignore.hasMatch(text)) return;
     if (_important.hasMatch(text)) {
       if (_importantCount++ < _maxImportant) {
         debugPrint('[webrtc] ${text.trimRight()}');

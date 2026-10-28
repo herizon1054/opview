@@ -42,6 +42,12 @@ Future<void> reapplyImmersive() async {
   on PlatformException { /* best-effort */ }
   on MissingPluginException { /* best-effort */ }
 }
+/// 以系統瀏覽器開啟網址（OP 設定網頁）
+Future<bool> openUrl(String url) async {
+  try { return await _channel.invokeMethod<bool>('openUrl', url) ?? false; }
+  on PlatformException { return false; }
+  on MissingPluginException { return false; }
+}
 Future<bool> enterPip() async {
   try {
     final entered = await _channel.invokeMethod<bool>('enterPip') ?? false;

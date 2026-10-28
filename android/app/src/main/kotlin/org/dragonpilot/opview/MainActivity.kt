@@ -176,6 +176,18 @@ class MainActivity: FlutterActivity() {
                     window.attributes = attrs
                     result.success(null)
                 }
+                // 以系統瀏覽器開啟網址（OP 設定網頁 http://<comma IP>:5088）
+                "openUrl" -> {
+                    val url = call.arguments as? String
+                    if (url == null) { result.success(false) } else {
+                        try {
+                            val i = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            startActivity(i)
+                            result.success(true)
+                        } catch (e: Exception) { result.success(false) }
+                    }
+                }
                 "isInPip" -> result.success(
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode)
                 "enterPip" -> {

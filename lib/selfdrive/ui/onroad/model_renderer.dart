@@ -33,6 +33,11 @@ const noThrottleColors = [
 const _leadGlowColor = Color.fromARGB(255, 218, 202, 37);
 const _leadChevronBase = Color.fromARGB(255, 201, 34, 49);
 
+// 鎖定框標籤：本車比前車快超過此值（km/h）時底色改為系統紅色
+const _leadClosingWarnKph = 20.0;
+// 系統紅色：同 alert_renderer 的 critical 警示底色（openpilot 0xC92231）
+const _leadClosingBg = Color(0xF1C92231);
+
 // -- data classes --
 
 class LeadVehicle {
@@ -211,7 +216,10 @@ class ModelRendererPainter extends CustomPainter {
       if (point == null) continue;
 
       if (state.modernOverlay) {
-        _drawLeadBox(canvas, point, dRel);
+        // 前車速度：radarState LeadData.vLead（m/s，絕對速度）；沒有時以 vEgo + vRel 推算
+        final vLeadRaw = (lead['vLead'] as num?)?.toDouble();
+        final vLead = (vLeadRaw != null && vLeadRaw.isFinite) ? vLeadRaw : state.vEgo + vRel;
+        _drawLeadBox(canvas, point, dRel, vLead);
         continue;
       }
       final lv = _buildLeadVehicle(dRel, vRel, point);
@@ -220,7 +228,7 @@ class ModelRendererPainter extends CustomPainter {
   }
 
   // A projected radar marker, not an image-detection bounding box.
-  void _drawLeadBox(Canvas canvas, Offset point, double distance) {
+  void _drawLeadBox(Canvas canvas, Offset point, double distance, double vLead) {
     final scale = (contentRect.height / 600).clamp(0.6, 2.0);
     final width = (1500 / distance).clamp(28.0, 85.0) * scale;
     final rect = Rect.fromLTWH(point.dx - width / 2, point.dy - width, width, width * .7);
@@ -233,16 +241,28 @@ class ModelRendererPainter extends CustomPainter {
       canvas.drawPath(Path()..moveTo(corner.dx + dx, corner.dy)
         ..lineTo(corner.dx, corner.dy)..lineTo(corner.dx, corner.dy + dy), paint);
     }
-    final headway = state.vEgo.isFinite && state.vEgo > 1 ? distance / state.vEgo : null;
-    final label = '${distance.round()} m · ${headway == null ? "—" : headway.toStringAsFixed(1)} s';
+    // 鎖定框下方：距離（固定公尺）· 前車速度（km 或 mph，不顯示 /h）。車距時間仍在右側儀表卡片。
+    // 本車比前車快超過 20 km/h：底色改為系統紅色（與 critical 警示同色 0xC92231）。
+    final unit = state.isMetric ? 'km' : 'mph';
+    final conv = state.isMetric ? msToKph : msToMph;
+    final speed = vLead.isFinite ? (max(0.0, vLead) * conv).round().toString() : '—';
+    final label = '${distance.round()} m · $speed $unit';
+    final closing = vLead.isFinite && state.vEgo.isFinite &&
+        (state.vEgo - vLead) * msToKph > _leadClosingWarnKph;
     final text = TextPainter(text: TextSpan(text: label,
       style: TextStyle(color: Colors.white, fontSize: 12 * scale, fontWeight: FontWeight.w600)),
       textDirection: TextDirection.ltr)..layout();
-    final origin = Offset(point.dx - text.width / 2, rect.bottom + 8 * scale);
+    final gap = 8 * scale;
+    // 一律放框下方；只有超出畫面底部時往上收，避免被切掉
+    final oy = min(rect.bottom + gap, contentRect.bottom - text.height - 4 * scale);
+    final minX = contentRect.left + 10 * scale;
+    final maxX = max(minX, contentRect.right - text.width - 10 * scale);
+    final ox = min(max(point.dx - text.width / 2, minX), maxX);
+    final origin = Offset(ox, oy);
     canvas.drawRRect(RRect.fromRectAndRadius(
       Rect.fromLTWH(origin.dx - 7 * scale, origin.dy - 4 * scale,
         text.width + 14 * scale, text.height + 8 * scale), Radius.circular(10 * scale)),
-      Paint()..color = const Color(0xDD10191D));
+      Paint()..color = closing ? _leadClosingBg : const Color(0xDD10191D));
     text.paint(canvas, origin);
   }
 

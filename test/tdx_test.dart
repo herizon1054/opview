@@ -94,16 +94,16 @@ void main() {
     expect(tester.getRect(find.byType(TdxMarquee)).top, lessThan(60));
     expect(tester.takeException(), isNull);
 
-    // 側欄 TDX 開關：關閉 → 前方車速與跑馬燈都隱藏、小車回來；再開 → 恢復
-    await tester.ensureVisible(find.text('TDX 開'));
-    await tester.tap(find.text('TDX 開'));
+    // TDX 顯示開關（已移到顯示設定，這裡直接切 state）：關閉 → 前方車速與跑馬燈都隱藏、小車回來；再開 → 恢復
+    expect(find.text('TDX 開'), findsNothing); // 側欄不再有 TDX 開關
+    state.tdxEnabled = false;
+    state.notifyNow();
     await tester.pump();
-    expect(state.tdxEnabled, isFalse);
-    expect(find.text('TDX 關'), findsOneWidget);
     expect(find.text('前方車速'), findsNothing);
     expect(find.byType(TdxMarquee), findsNothing);
     expect(find.byIcon(Icons.directions_car_outlined), findsOneWidget);
-    await tester.tap(find.text('TDX 關'));
+    state.tdxEnabled = true;
+    state.notifyNow();
     await tester.pump();
     expect(find.text('前方車速'), findsOneWidget);
     expect(find.byType(TdxMarquee), findsOneWidget);

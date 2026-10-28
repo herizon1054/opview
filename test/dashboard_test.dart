@@ -32,9 +32,7 @@ void main() {
         home: AugmentedRoadView(uiState: state)));
       expect(find.byType(DashboardHud), findsOneWidget);
       expect(tester.takeException(), isNull);
-      await tester.tap(find.text('連線資訊'));
-      await tester.pump();
-      expect(find.textContaining('傳輸：WebRTC'), findsOneWidget);
+      expect(find.text('連線資訊'), findsNothing); // 已從側欄移除
       await tester.tap(find.byIcon(Icons.straighten));
       await tester.pump();
       expect(state.isMetric, isFalse);

@@ -42,6 +42,10 @@ class AugmentedRoadView extends StatefulWidget {
   final bool showControls;
   final ViewerSettings? settings;
   final bool pip;
+  /// 取得 comma IP（傳給顯示設定的「OP 設定網頁」）
+  final String? Function()? opHost;
+  /// 退出到主畫面；null = 不顯示「退出」
+  final VoidCallback? onExit;
 
   const AugmentedRoadView({
     super.key,
@@ -51,6 +55,8 @@ class AugmentedRoadView extends StatefulWidget {
     this.showControls = true,
     this.settings,
     this.pip = false,
+    this.opHost,
+    this.onExit,
   });
 
   @override
@@ -152,7 +158,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
     try {
       await showDialog<void>(context: context, builder: (ctx) {
         dialogContext = ctx;
-        return ViewerSettingsDialog(settings: widget.settings!);
+        return ViewerSettingsDialog(settings: widget.settings!, opHost: widget.opHost);
       });
     } finally {
       dialogContext = null;
@@ -213,8 +219,6 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
       }
       widget.uiState.notifyNow();
     }),
-    if (widget.uiState.isConnected && widget.uiState.alertSize == 0)
-      _RailItem(Icons.info_outline, '連線資訊', () => setState(() => _showDetails = !_showDetails)),
     _RailItem(Icons.straighten, widget.uiState.isMetric ? 'km/h' : 'mph', () {
       if (widget.settings != null) {
         widget.settings!.setMetric(!widget.uiState.isMetric);
@@ -223,15 +227,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
       }
       widget.uiState.notifyNow();
     }),
-    // TDX 路況顯示開關（只影響手機端顯示，comma 端照常發布）
-    _RailItem(Icons.traffic_outlined, widget.uiState.tdxEnabled ? 'TDX 開' : 'TDX 關', () {
-      if (widget.settings != null) {
-        widget.settings!.setTdx(!widget.uiState.tdxEnabled);
-      } else {
-        setState(() { widget.uiState.tdxEnabled = !widget.uiState.tdxEnabled; });
-      }
-      widget.uiState.notifyNow();
-    }, dimmed: !widget.uiState.tdxEnabled),
+    // TDX 路況顯示開關已移到「顯示設定」
     if (widget.settings != null && widget.uiState.alertSize == 0)
       _RailItem(Icons.settings_outlined, '顯示設定', _openSettings),
     if (widget.settings?.pictureInPicture == true && system.pipSupported.value && widget.uiState.isConnected)
@@ -241,6 +237,8 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
           const SnackBar(content: Text('Android 未允許進入子母畫面')));
       }),
     _RailItem(Icons.fullscreen, '全螢幕', _enterFullscreen),
+    if (widget.onExit != null)
+      _RailItem(Icons.logout, '退出', widget.onExit!),
   ];
 
   // 系統字型放大最多跟到 1.2 倍：看得清楚，但不會撐爆固定寬度的側欄

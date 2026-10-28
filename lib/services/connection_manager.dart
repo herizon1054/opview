@@ -61,6 +61,10 @@ class ConnectionManager {
         _adapter = adapter ?? CerealAdapter();
 
   String? _host;
+  String? _lastKnownHost; // 最近一次找到 / 嘗試的 comma IP（OP 設定網頁用，連線失敗也保留）
+
+  /// 目前或最近一次已知的 comma IP
+  String? get lastKnownHost => _host ?? _lastKnownHost;
   StreamSubscription? _deviceSub;
   StreamSubscription? _dataSub;
   StreamSubscription? _stateSub;
@@ -101,6 +105,7 @@ class ConnectionManager {
     _logNetwork();
 
     final cachedHost = await _loadCachedHost();
+    if (cachedHost != null) _lastKnownHost ??= cachedHost;
     if (cachedHost != null && await _isOnSameSubnet(cachedHost)) {
       _setStatus('trying cached host $cachedHost');
       _host = cachedHost;
@@ -152,6 +157,7 @@ class ConnectionManager {
   void _onDeviceFound(DiscoveredDevice device) {
     if (_uiState.isConnected) return; // already connected via cached host
     _host = device.host;
+    _lastKnownHost = device.host;
     _setStatus('found ${device.displayName} at ${device.host}');
     _stopDiscovery();
     if (!_connecting) _connect();

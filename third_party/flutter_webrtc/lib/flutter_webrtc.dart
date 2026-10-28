@@ -23,3 +23,5 @@ export 'src/native/android/audio_configuration.dart';
 export 'src/native/ios/audio_configuration.dart';
 export 'src/native/rtc_video_platform_view_controller.dart';
 export 'src/native/rtc_video_platform_view.dart';
+// opview patch：匯出原生 log 監聽（opview 把 libwebrtc 解碼器 log 寫進可分享的 log）
+export 'src/native_logs_listener.dart' show NativeLogsListener;

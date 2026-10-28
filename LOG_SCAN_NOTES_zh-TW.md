@@ -128,3 +128,14 @@ flutter pub get        # pubspec.lock 的 flutter_webrtc 會變成 source: path
 flutter analyze --no-fatal-infos
 flutter build apk --release
 ```
+
+## 16. 硬體解碼器退回軟體解碼的診斷＋renderer 建立時機（2026-10-29）
+- 實測（Xiaomi 26012RN62Y，Android 16）：`dec=c2.android.avc.decoder (fallback from: c2.qti.avc.decoder)`，平均解碼 122 ms/幀，
+  影像延遲約 190 ms（jb ≈70 + dec ≈122）。comma 端（opview_link_test CSV）全幀送出、webrtcd CPU 17–31%，問題在手機端。
+- 新增 `lib/services/webrtc_native_log.dart`：透過 flutter_webrtc 的 `NativeLogsListener`（injectable logger）把 libwebrtc
+  原生 warning / error 寫進 opview log（行首 `[webrtc]`），解碼相關每 10 秒最多 60 行、其他 8 行。用來看硬體解碼為何失敗。
+  需在 `main()` 任何 WebRTC 呼叫前 `install()`（log 等級只在 flutter_webrtc 首次初始化時生效）。
+  - `third_party/flutter_webrtc/lib/flutter_webrtc.dart` 加 `export 'src/native_logs_listener.dart' show NativeLogsListener;`
+  - `pubspec.yaml` 加 `logger: ^2.6.2`（原本即為 flutter_webrtc 的間接依賴，版本 2.6.2）
+- `webrtc_client.dart`：影像 renderer 改在 webrtcd 回 answer 之後才建立；comma 沒開 webrtcd（Connection refused）時的重試
+  不再每次建立 / 釋放 Flutter 畫布（實測 11 分鐘重試建了 30 個）。onTrack 早於 renderer 建立時先暫存 stream。

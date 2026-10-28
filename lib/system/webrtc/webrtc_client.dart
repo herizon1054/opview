@@ -51,16 +51,10 @@ class WebRTCClient {
   }
 
   Future<void> _connect(String host, String camera, int gen) async {
-    final output = RTCVideoRenderer();
-    await output.initialize();
-    renderer.value = output;
-    output.onResize = () {
-      if (gen != _connectGen) return;
-      debugPrint('[opview] video texture=${output.textureId} '
-          '${output.videoWidth}x${output.videoHeight}');
-    };
-    debugPrint('[opview] new video renderer texture=${output.textureId} generation=$gen');
-    if (gen != _connectGen) return;
+    // 影像 renderer（Flutter 畫布）等 webrtcd 回應 answer 後才建立：
+    // comma 沒開 webrtcd（Connection refused）時的重試不會一直建立 / 釋放畫布。
+    RTCVideoRenderer? output;
+    MediaStream? pendingStream; // onTrack 若早於 renderer 建立，先暫存
 
     // create peer connection — no ICE servers needed for LAN
     _pc = await createPeerConnection({'iceServers': []});
@@ -83,7 +77,12 @@ class WebRTCClient {
       if (gen != _connectGen) return;
       debugPrint('[opview] webrtc track ${event.track.kind} (streams: ${event.streams.length})');
       if (event.track.kind == 'video' && event.streams.isNotEmpty) {
-        output.srcObject = event.streams[0];
+        final o = output;
+        if (o != null) {
+          o.srcObject = event.streams[0];
+        } else {
+          pendingStream = event.streams[0];
+        }
       }
     };
 
@@ -123,9 +122,27 @@ class WebRTCClient {
     final answer = await postStream(host, offer.sdp!, camera: camera);
     if (gen != _connectGen) return;
     debugPrint('[opview] webrtc answer received');
+
+    final r = RTCVideoRenderer();
+    await r.initialize();
+    if (gen != _connectGen) {
+      await r.dispose();
+      return;
+    }
+    output = r;
+    renderer.value = r; // _cleanup() 由 renderer.value 取得並釋放
+    r.onResize = () {
+      if (gen != _connectGen) return;
+      debugPrint('[opview] video texture=${r.textureId} ${r.videoWidth}x${r.videoHeight}');
+    };
+    debugPrint('[opview] new video renderer texture=${r.textureId} generation=$gen');
+
     await _pc!.setRemoteDescription(
       RTCSessionDescription(answer['sdp'] as String, answer['type'] as String),
     );
+    if (gen != _connectGen) return;
+    final early = pendingStream;
+    if (early != null && r.srcObject == null) r.srcObject = early;
   }
 
   /// WebRTC 統計摘要（log 用）：實際使用的網路位址、影像收包/解碼數

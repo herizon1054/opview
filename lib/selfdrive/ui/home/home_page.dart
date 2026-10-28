@@ -6,7 +6,6 @@
 // 寫入 dp_dev_model_selected，comma 重新開機後生效。
 
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:opview/services/comma_models_api.dart';
@@ -151,10 +150,27 @@ class _HomePageState extends State<HomePage> {
     return pending != m.selected;
   }
 
-  Widget _modelSection() {
+  Widget _modelSection({required bool portrait}) {
     final m = _models;
     final brands = m?.byBrand.keys.toList() ?? const <String>[];
     final models = (m != null && _brand != null) ? (m.byBrand[_brand] ?? const <String>[]) : const <String>[];
+    final brandDd = DropdownButton<String?>(
+      isExpanded: true,
+      value: _brand,
+      hint: const Text('品牌'),
+      items: [
+        const DropdownMenuItem<String?>(value: null, child: Text('自動偵測')),
+        for (final b in brands) DropdownMenuItem<String?>(value: b, child: Text(b, overflow: TextOverflow.ellipsis)),
+      ],
+      onChanged: m == null ? null : (v) => setState(() { _brand = v; _model = null; }),
+    );
+    final modelDd = DropdownButton<String>(
+      isExpanded: true,
+      value: models.contains(_model) ? _model : null,
+      hint: Text(_brand == null ? '自動偵測（不指定車型）' : '車型'),
+      items: [for (final x in models) DropdownMenuItem(value: x, child: Text(x, overflow: TextOverflow.ellipsis))],
+      onChanged: (m == null || _brand == null) ? null : (v) => setState(() => _model = v),
+    );
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(color: _card, borderRadius: BorderRadius.circular(16)),
@@ -171,25 +187,12 @@ class _HomePageState extends State<HomePage> {
             onPressed: _loading ? null : () => _tryLoad(force: true)),
         ]),
         const SizedBox(height: 6),
-        Row(children: [
-          Expanded(flex: 2, child: DropdownButton<String?>(
-            isExpanded: true,
-            value: _brand,
-            hint: const Text('品牌'),
-            items: [
-              const DropdownMenuItem<String?>(value: null, child: Text('自動偵測')),
-              for (final b in brands) DropdownMenuItem<String?>(value: b, child: Text(b, overflow: TextOverflow.ellipsis)),
-            ],
-            onChanged: m == null ? null : (v) => setState(() { _brand = v; _model = null; }),
-          )),
+        // 直向：品牌 / 車型上下排；橫向：左右並排
+        if (portrait) ...[brandDd, modelDd]
+        else Row(children: [
+          Expanded(flex: 2, child: brandDd),
           const SizedBox(width: 12),
-          Expanded(flex: 3, child: DropdownButton<String>(
-            isExpanded: true,
-            value: models.contains(_model) ? _model : null,
-            hint: Text(_brand == null ? '自動偵測（不指定車型）' : '車型'),
-            items: [for (final x in models) DropdownMenuItem(value: x, child: Text(x, overflow: TextOverflow.ellipsis))],
-            onChanged: (m == null || _brand == null) ? null : (v) => setState(() => _model = v),
-          )),
+          Expanded(flex: 3, child: modelDd),
         ]),
         const SizedBox(height: 8),
         SizedBox(height: 44, child: FilledButton.icon(
@@ -242,6 +245,14 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    final portrait = size.height > size.width;
+    final buttons = [
+      _button(Icons.play_circle_outline, '進入 opview', widget.onEnterOpview),
+      _button(Icons.settings_outlined, '顯示設定', _openSettings),
+      _button(Icons.tune, '裝置設定', () => openOpSettings(context, widget.hostGetter() ?? _host)),
+      _button(Icons.power_settings_new, '離開程式', () => SystemNavigator.pop(), color: Colors.redAccent),
+    ];
     return Scaffold(
       backgroundColor: Colors.black,
       body: SafeArea(child: SingleChildScrollView(
@@ -249,14 +260,15 @@ class _HomePageState extends State<HomePage> {
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           const Padding(padding: EdgeInsets.only(left: 4, bottom: 8),
             child: Text('opview', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: _teal))),
-          _modelSection(),
+          _modelSection(portrait: portrait),
           const SizedBox(height: 14),
-          Row(children: [
-            _button(Icons.play_circle_outline, '進入 opview', widget.onEnterOpview),
-            _button(Icons.settings_outlined, '顯示設定', _openSettings),
-            _button(Icons.tune, '裝置設定', () => openOpSettings(context, widget.hostGetter() ?? _host)),
-            _button(Icons.power_settings_new, '離開程式', () => SystemNavigator.pop(), color: Colors.redAccent),
-          ]),
+          // 直向 2×2，橫向一排四個
+          if (portrait) ...[
+            Row(children: [buttons[0], buttons[1]]),
+            const SizedBox(height: 10),
+            Row(children: [buttons[2], buttons[3]]),
+          ] else
+            Row(children: buttons),
         ]),
       )),
     );

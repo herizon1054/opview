@@ -56,12 +56,65 @@
    - leadOne / leadTwo 各自顯示。原版介面（三角形標記）不變。
    - 尺寸沿用原公式（縮放 = 畫面高 / 600，夾在 0.6–2.0；字 12 × 縮放）：844×390 手機上字約 7 dp。
 
+11. **直向 / 橫向自動切換排版**
+   - 解除橫向鎖定：`main.dart`（portraitUp + landscapeLeft/Right，不含倒立直向）、AndroidManifest
+     `screenOrientation="fullUser"`（依手機「自動旋轉」設定；`configChanges` 已含 orientation|screenSize，旋轉不重建畫面、
+     不中斷 WebRTC）、iOS Info.plist 加入 Portrait。
+   - **opview 畫面**：直向時操作列改成影像下方一排按鈕（同側欄的按鈕與順序，含 LIVE / OFFLINE）；橫向維持左側側欄。
+     影像仍為 BoxFit.cover 置中裁切，投影公式 `videoScale = max(W/camW, H/camH)`、主點在中心，直向一樣對齊。
+   - HUD / 警示 / 邊框 / 前車框改依**短邊**縮放（`min(W, H)`）：橫向 = 高，與原本完全相同；直向 = 寬，避免放大超出寬度。
+   - 儀表卡片直向放寬到畫面寬 66%；狀態徽章移到卡片上方；方向燈箭頭依卡片外側剩餘空間自動縮小（橫向不受影響）。
+   - **主畫面**：直向時品牌 / 車型下拉上下排、四個按鈕 2×2；橫向維持原排版。
+   - 新增 `test/orientation_test.dart`（390×844 直向：下方操作列、全螢幕、方向燈不溢出；844×390 橫向側欄；主畫面 2×2）。
+
+12. **直向 opview 改用方案 B（影像在上完整顯示、儀表在下）**
+   - 影像區高度 = 寬 ×（相機高 / 寬），依目前串流相機（road / wideRoad）的原始比例 1928×1208，影像**不裁切**；
+     因比例相同，cover 投影等於完整顯示，路徑與前車框仍對齊。
+   - 影像下方新增 `PortraitPanel`（`lib/selfdrive/ui/onroad/portrait_panel.dart`），由上而下：
+     徽章（ENGAGED / EXPERIMENTAL）＋ opview 字樣 → 儀表卡片（寬 = 畫面寬 − 32，高 = 寬 × 0.42，上限 150，空間不足自動縮）
+     → TDX 列「前方車速 ＋ TDX 順暢 / 車多 / 壅塞」（有資料才顯示）→ TDX 事件（過長自動捲動）→ 警示區。
+   - 直向儀表卡片右欄固定顯示**前車距離 / 車頭時距**（TDX 前方車速移到獨立一列）；橫向仍照原本，右欄有 TDX 時顯示前方車速。
+   - 警示（alert）：small / mid 貼在資訊區底部（操作列上方），字級依畫面寬；full 蓋滿資訊區。直向影像上不再疊警示 / TDX 跑馬燈。
+   - 方向燈箭頭：直向放在影像左下 / 右下角（卡片佔滿寬度，兩側沒有空間）。
+   - 操作列維持一排在最下方；全螢幕時操作列收起、資訊區往下延伸，右上角叫回按鈕不變。
+   - 原版介面（三角形標記）直向：原版 HUD 疊在影像上，資訊區只放 TDX 事件與警示。
+   - 儀表卡片抽成共用的 `DashboardCard`（`dashboard_hud.dart`），橫向 `DashboardHud` 外觀不變。
+   - `test/orientation_test.dart`：影像高 = 390×1208/1928、卡片在影像下方且寬 > 85%、方向燈在影像內；TDX 列 / 事件 / 警示位置。
+
+13. **影像卡住（畫面不同步）自動恢復**
+   - 現象（2026-10-28 17:08–17:13 log＋影片）：儀表數字持續更新，影像停在舊畫面、偶爾整片綠色。
+     統計：封包每秒約 107 個、lost=0、位元率正常（comma 有照常送），但手機每 10 秒只解出約 6–7 幀、丟棄約 190 幀
+     （正常為每 10 秒解 200 幀、丟 0–14 幀）。17:13 App 切回前景重新建立連線後立刻恢復 20 fps。
+   - 判斷：問題在手機端接收 / 解碼器狀態，不是網路或熱點；熱點連線本身正常（pair 為 172.20.10.x wifi）。
+   - 修正：`ConnectionManager` 每 5 秒檢查一次；資料有在流（≥100 封包）但解碼 < 5 fps，連續 2 次（約 10 秒）
+     就自動重建影像連線。2 分鐘內最多自動重建 3 次，避免無限重連。log 會出現 `video stall?` 與 `restarting video stream`。
+   - log 的 `webrtc stats` 新增：`fps`、`decMs`（平均解碼時間）、`jbMs`（平均 jitter buffer 延遲）、`nack` / `pli` / `fir`、
+     `freeze`（凍結次數 / 秒數）、`dec=`（解碼器實作名稱）。下次再發生可分辨是解碼器慢還是緩衝等待。
+
+14. **（Impeller 版：此項未套用，manifest 維持 Flutter 預設的 Impeller）影像卡住：關閉 Impeller 做對照測試**（`AndroidManifest.xml` 加 `io.flutter.embedding.android.EnableImpeller=false`）
+   - 使用者回報：手機重開、App 重開、不開其他 App 仍會發生 → 不是偶發的解碼器狀態，較可能是固定路徑上的問題。
+   - libwebrtc M137 `AndroidVideoDecoder.deliverTextureFrame`：上一張解出的畫面紋理還沒被釋放時，新解出的畫面直接丟棄
+     （`releaseOutputBuffer(index, false)`，註解 "We are still waiting for texture for the previous frame, drop this one"）；
+     這些幀計入 framesDropped、不計入 framesDecoded。與卡住時的統計（封包全到、每秒解 0.6 幀、丟 19 幀）吻合。
+   - 紋理釋放取決於 flutter_webrtc 的 `SurfaceTextureRenderer`（EglRenderer）把畫面畫進 Flutter 的 SurfaceProducer；
+     Flutter 3.38 在 Android API 29+ 預設 Impeller。關閉後改用 OpenGL 渲染器，若卡住 / 綠畫面消失即可確認。
+   - 要恢復 Impeller：刪掉該 meta-data 即可。
+
+15. **傳輸延遲記錄**（`lib/services/latency_tracker.dart`，每 10 秒一行 `latency 10s:`）
+   - 資料：webrtcd 每筆訊息帶 comma 的 `logMonoTime`；手機收到時間 − logMonoTime = 延遲 + 兩台時鐘固定差。
+     兩台沒對時，取 60 秒內最小差值為基準，記錄**比最順那筆多出的延遲**（平均 / p95 / 最大）與訊息最大到達間隔（gap）。
+     例：`data +3ms avg / +12 p95 / +85 max (n=480), gap max 140ms`。正常約個位數 ms；持續變大 = 排隊 / 網路 / comma 忙碌。
+   - 影像：由 WebRTC 統計的本視窗差值算出 jitter buffer 平均等待＋平均解碼時間＋RTT/2，
+     例：`video jb 45ms + dec 8ms + rtt/2 7ms ≈ 60ms`（手機端可量到的部分，不含 comma 編碼與送出前排隊）。
+   - 限制：沒有對時，量不到絕對的「comma → 手機」總延遲；記錄的是延遲變化與手機端影像延遲。
+   - 新增 `test/latency_tracker_test.dart`。
+
 ## 修改檔案（相對原 opview-20261027.zip）
-- 新增：`lib/services/app_log.dart`、`lib/services/impl/subnet_scan_discovery.dart`、`lib/selfdrive/ui/settings/op_settings_link.dart`、`lib/selfdrive/ui/home/home_page.dart`、`lib/services/comma_models_api.dart`、
+- 新增：`lib/services/app_log.dart`、`lib/services/impl/subnet_scan_discovery.dart`、`lib/selfdrive/ui/settings/op_settings_link.dart`、`lib/selfdrive/ui/home/home_page.dart`、`lib/services/comma_models_api.dart`、`lib/selfdrive/ui/onroad/portrait_panel.dart`、`lib/services/latency_tracker.dart`、`test/latency_tracker_test.dart`、
   `test/home_page_test.dart`、`third_party/flutter_webrtc/`（修改版）
 - 修改：`pubspec.yaml`（dependency_overrides）
 - 修改：`lib/main.dart`、`lib/app.dart`、`lib/services/connection_manager.dart`、`lib/services/transport.dart`、`lib/services/impl/webrtc_transport.dart`、
-  `lib/system/webrtc/webrtc_client.dart`、`lib/selfdrive/ui/settings/viewer_settings_dialog.dart`、`lib/selfdrive/ui/onroad/augmented_road_view.dart`、`lib/services/viewer_system.dart`、`lib/services/viewer_settings.dart`、`lib/selfdrive/ui/onroad/model_renderer.dart`、`test/rail_test.dart`、`test/dashboard_test.dart`、`test/tdx_test.dart`、
+  `lib/system/webrtc/webrtc_client.dart`、`lib/selfdrive/ui/settings/viewer_settings_dialog.dart`、`lib/selfdrive/ui/onroad/augmented_road_view.dart`、`lib/services/viewer_system.dart`、`lib/services/viewer_settings.dart`、`lib/selfdrive/ui/onroad/model_renderer.dart`、`lib/selfdrive/ui/onroad/dashboard_hud.dart`、`lib/main.dart`、`ios/Runner/Info.plist`、`test/orientation_test.dart`（新增）、`test/rail_test.dart`、`test/dashboard_test.dart`、`test/tdx_test.dart`、
   `android/app/src/main/kotlin/org/dragonpilot/opview/MainActivity.kt`
 - 未改：WebRTC 請求內容（9 個訂閱＋tdx 選用）、AndroidManifest（不要求定位權限）、comma 端不需修改。
 

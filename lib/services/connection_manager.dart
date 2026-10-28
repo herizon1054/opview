@@ -14,6 +14,7 @@ import 'package:flutter/foundation.dart';
 import 'package:opview/selfdrive/ui/ui_state.dart';
 import 'package:opview/services/discovery.dart';
 import 'package:opview/services/transport.dart';
+import 'package:opview/services/latency_tracker.dart';
 import 'package:opview/services/adapter.dart';
 import 'package:opview/services/impl/mdns_discovery.dart';
 import 'package:opview/services/impl/subnet_scan_discovery.dart';
@@ -32,6 +33,17 @@ const _mediaConnectTimeout = Duration(seconds: 12);
 // WebRTC 進入 disconnected 後的寬限時間（常會自行恢復），逾時才重連
 const _disconnectGrace = Duration(seconds: 5);
 
+// 影像卡住偵測（實測：封包照收、lost=0，但每秒只解出不到 1 幀、其餘被丟棄，畫面停在舊影像 / 綠畫面；
+// 報告指出背景／前景重連後恢復；本版重建 PeerConnection 與 renderer）。每 5 秒取一次統計：
+//   收到封包 ≥ 100（資料有在流）但解碼 < 5 fps → 記一次；連續 2 次（約 10 秒）就重建影像連線。
+// 為避免無限重連，2 分鐘內最多自動重建 3 次。
+const _statsInterval = Duration(seconds: 5);
+const _stallMinPackets = 100;
+const _stallMaxFps = 5.0;
+const _stallWindows = 2;
+const _stallMaxRecoveries = 3;
+const _stallRecoveryWindow = Duration(minutes: 2);
+
 // delay before re-discovery after all retries exhausted
 const _rediscoverDelay = Duration(seconds: 15);
 
@@ -49,6 +61,10 @@ class ConnectionManager {
   final TelemetryAdapter _adapter;
 
   dynamic get videoRenderer => _transport.videoRenderer;
+  Listenable get rendererChanges => _transport.rendererChanges;
+  bool _replaced = false;
+  bool _switchingCamera = false;
+  bool _statsBusy = false;
 
   ConnectionManager(
     this._uiState, {
@@ -83,6 +99,12 @@ class ConnectionManager {
 
   // log：每 10 秒記錄各 service 收到的訊息數（判斷資料有沒有進來、tdx 有沒有在發）
   static final _typeRe = RegExp(r'"type":\s*"(\w+)"');
+  // webrtcd 每筆訊息開頭為 {"type": "...", "logMonoTime": N, ...}（巢狀的 type 不會緊接 logMonoTime）
+  // webrtcd 控制訊息：開頭即 {"type": "connectionReplaced" | "clockSync" | "disconnect"}
+  static final _controlRe = RegExp(r'^\s*\{\s*"type"\s*:\s*"(connectionReplaced|clockSync|disconnect)"');
+  static final _monoRe = RegExp(r'"type":\s*"\w+",\s*"logMonoTime":\s*(\d+)');
+  final LatencyTracker _latency = LatencyTracker();
+  VideoCounters? _prevVideoLog;
   final Map<String, int> _rxCounts = {};
   Timer? _statsTimer;
   Timer? _graceTimer;
@@ -101,12 +123,15 @@ class ConnectionManager {
   /// start discovery + auto-connect + network monitoring
   /// tries cached host first for fast reconnect, mDNS in parallel as fallback
   void start() async {
+    if (_replaced || _paused) return;
     _listenConnectivity();
     _logNetwork();
 
     final cachedHost = await _loadCachedHost();
     if (cachedHost != null) _lastKnownHost ??= cachedHost;
-    if (cachedHost != null && await _isOnSameSubnet(cachedHost)) {
+    final sameSubnet = cachedHost != null && await _isOnSameSubnet(cachedHost);
+    if (_paused || _replaced) return;
+    if (cachedHost != null && sameSubnet) {
       _setStatus('trying cached host $cachedHost');
       _host = cachedHost;
       _startDiscovery(); // mDNS in parallel as fallback
@@ -140,7 +165,7 @@ class ConnectionManager {
   }
 
   Future<void> _startDiscovery() async {
-    if (_discovering) return; // already searching — avoid duplicate mDNS sessions
+    if (_discovering || _paused || _replaced) return; // already searching — avoid duplicate mDNS sessions
     _discovering = true;
     _deviceSub?.cancel();
     _deviceSub = _discovery.devices.listen(_onDeviceFound);
@@ -155,7 +180,7 @@ class ConnectionManager {
 
   /// first device found → connect (or update host if cached attempt is still in-flight)
   void _onDeviceFound(DiscoveredDevice device) {
-    if (_uiState.isConnected) return; // already connected via cached host
+    if (_replaced || _paused || _uiState.isConnected) return; // already connected via cached host
     _host = device.host;
     _lastKnownHost = device.host;
     _setStatus('found ${device.displayName} at ${device.host}');
@@ -164,7 +189,7 @@ class ConnectionManager {
   }
 
   Future<void> _connect() async {
-    if (_connecting || _host == null || _paused) return;
+    if (_connecting || _host == null || _paused || _replaced) return;
     _connecting = true;
     _reconnecting = false;
     final epoch = ++_connectEpoch;
@@ -175,6 +200,7 @@ class ConnectionManager {
 
     try {
       _setStatus('connecting to $_host (camera: $_streamType)');
+      _listenData(); // receive connectionReplaced even while signaling is finishing
       await _transport.connect(_host!, camera: _streamType);
       if (epoch != _connectEpoch) return; // superseded by newer connect
       // signaling 成功不代表影像/資料通道通了：等 WebRTC 真正 connected 才算連線
@@ -188,7 +214,6 @@ class ConnectionManager {
         return;
       }
       _retryCount = 0;
-      _listenData();
       _listenState();
       _setConnected(true);
       _startStats();
@@ -233,16 +258,104 @@ class ConnectionManager {
     }
   }
 
+  VideoCounters? _prevVideo;
+  final Stopwatch _videoClock = Stopwatch()..start();
+  int? _prevVideoUs;
+  int _stallCount = 0;
+  final List<DateTime> _stallRecoveries = [];
+
   void _startStats() {
     _statsTimer?.cancel();
     _rxCounts.clear();
-    _statsTimer = Timer.periodic(const Duration(seconds: 10), (_) async {
-      final keys = _rxCounts.keys.toList()..sort();
-      debugPrint('[opview] rx 10s: ${keys.isEmpty ? '(none)' : keys.map((k) => '$k=${_rxCounts[k]}').join(' ')}');
-      _rxCounts.clear();
-      final s = await _transport.statsSummary();
-      if (s != null) debugPrint('[opview] webrtc stats: $s');
+    _prevVideo = null;
+    _prevVideoLog = null;
+    _latency.reset();
+    _stallCount = 0;
+    var tick = 0;
+    final epoch = _connectEpoch;
+    _statsTimer = Timer.periodic(_statsInterval, (_) async {
+      if (_statsBusy) return;
+      _statsBusy = true;
+      try {
+        tick++;
+        final logNow = tick.isEven; // log 維持每 10 秒一筆
+        if (logNow) {
+          final keys = _rxCounts.keys.toList()..sort();
+          debugPrint('[opview] rx 10s: ${keys.isEmpty ? '(none)' : keys.map((k) => '$k=${_rxCounts[k]}').join(' ')}');
+          _rxCounts.clear();
+        }
+        final s = await _transport.statsSummary();
+        if (epoch != _connectEpoch) return; // 期間已重連
+        if (s != null && logNow) debugPrint('[opview] webrtc stats: $s');
+        if (logNow) _logLatency(_transport.lastVideoCounters);
+        _checkVideoStall(_transport.lastVideoCounters);
+      } finally {
+        _statsBusy = false;
+      }
     });
+  }
+
+  /// 每 10 秒一筆傳輸延遲（說明見 latency_tracker.dart）：
+  ///   latency 10s: data +平均/+p95/+最大（比 60 秒內最順的一筆多出的延遲）, gap 最大到達間隔 |
+  ///   video jb 本視窗平均 jitter buffer 等待 + dec 平均解碼 + rtt/2 ≈ 手機端影像延遲
+  void _logLatency(VideoCounters? v) {
+    final data = _latency.takeWindow();
+    String video = 'video (no stats)';
+    final p = _prevVideoLog;
+    if (v != null && p != null) {
+      final dEmit = v.jitterEmitted - p.jitterEmitted;
+      final dDec = v.framesDecoded - p.framesDecoded;
+      final jb = dEmit > 0 ? (v.jitterDelaySec - p.jitterDelaySec) / dEmit * 1000 : null;
+      final dec = dDec > 0 ? (v.decodeSec - p.decodeSec) / dDec * 1000 : null;
+      final half = v.rttSec != null ? v.rttSec! * 500 : null;
+      final total = (jb != null && dec != null) ? jb + dec + (half ?? 0) : null;
+      String f(double? x) => x == null ? '?' : x.toStringAsFixed(0);
+      video = 'video jb ${f(jb)}ms + dec ${f(dec)}ms + rtt/2 ${f(half)}ms ≈ ${f(total)}ms';
+    }
+    if (v != null) _prevVideoLog = v;
+    debugPrint('[opview] latency 10s: ${data ?? 'data (none)'} | $video');
+  }
+
+  /// 影像卡住偵測：見檔案開頭 _stall* 常數說明
+  void _checkVideoStall(VideoCounters? now) {
+    final prev = _prevVideo;
+    _prevVideo = now;
+    final sampleUs = _videoClock.elapsedMicroseconds;
+    final previousUs = _prevVideoUs;
+    _prevVideoUs = sampleUs;
+    if (now == null || prev == null || previousUs == null) return;
+    final secs = (sampleUs - previousUs) / 1000000;
+    if (secs <= 0) return;
+    final dPkts = now.packets - prev.packets;
+    final dDec = now.framesDecoded - prev.framesDecoded;
+    if (dPkts < 0 || dDec < 0) {
+      _stallCount = 0;
+      return;
+    }
+    final fps = dDec / secs;
+    if (dPkts < _stallMinPackets || fps >= _stallMaxFps) {
+      _stallCount = 0;
+      return;
+    }
+    _stallCount++;
+    debugPrint('[opview] video stall? ${secs.toStringAsFixed(0)}s: pkts +$dPkts, decoded +$dDec '
+        '(${fps.toStringAsFixed(1)} fps), received +${now.framesReceived - prev.framesReceived}, '
+        'dropped +${now.framesDropped - prev.framesDropped} ($_stallCount/$_stallWindows)');
+    if (_stallCount < _stallWindows) return;
+    _stallCount = 0;
+
+    final cutoff = DateTime.now().subtract(_stallRecoveryWindow);
+    _stallRecoveries.removeWhere((t) => t.isBefore(cutoff));
+    if (_stallRecoveries.length >= _stallMaxRecoveries) {
+      debugPrint('[opview] video stalled, but already restarted $_stallMaxRecoveries times in '
+          '${_stallRecoveryWindow.inMinutes} min — not restarting again');
+      return;
+    }
+    _stallRecoveries.add(DateTime.now());
+    _setStatus('video stalled (${fps.toStringAsFixed(1)} fps decoded) — restarting video stream');
+    _teardown();
+    _retryCount = 0;
+    _connect();
   }
 
   void _stopStats() {
@@ -254,9 +367,27 @@ class ConnectionManager {
   void _listenData() {
     _dataSub?.cancel();
     _dataSub = _transport.dataStream.listen((chunk) {
+      // 控制訊息（webrtcd 自己發的）只看開頭的 type 判斷，不做 jsonDecode；
+      // 一般 cereal 訊息（modelV2 等，每秒約 100 筆）不再多解析一次，交給 adapter 處理。
+      final control = _controlRe.firstMatch(chunk)?.group(1);
+      if (control != null) {
+        if (control == 'connectionReplaced') {
+          _replaced = true;
+          _stopDiscovery();
+          _teardown();
+          _setStatus('已由其他裝置接手，停止自動重連；返回前景不會搶回連線');
+        }
+        return; // clockSync / disconnect / connectionReplaced 都不是 cereal 資料
+      }
+
       for (final m in _typeRe.allMatches(chunk)) {
         final t = m.group(1)!;
         _rxCounts[t] = (_rxCounts[t] ?? 0) + 1;
+      }
+      final arrival = _latency.nowUs;
+      for (final m in _monoRe.allMatches(chunk)) {
+        final mono = int.tryParse(m.group(1)!);
+        if (mono != null) _latency.onMessage(mono, arrivalUs: arrival);
       }
       _adapter.apply(_uiState, chunk);
       _switchStreamIfNeeded();
@@ -265,7 +396,8 @@ class ConnectionManager {
 
   /// switch camera based on experimental mode + speed hysteresis
   /// (augmented_road_view.py:122-136)
-  void _switchStreamIfNeeded() {
+  Future<void> _switchStreamIfNeeded() async {
+    if (_switchingCamera || !_uiState.isConnected || _replaced) return;
     String target;
     if (_uiState.experimentalMode) {
       final vEgo = _uiState.vEgo;
@@ -281,13 +413,22 @@ class ConnectionManager {
       target = 'road';
     }
     if (target == _streamType) return;
-    _streamType = target;
-    _uiState.streamType = target;
-    _setStatus('camera switch → $_streamType');
-    // immediate reconnect — no retry counting
-    _teardown();
-    _retryCount = 0;
-    _connect();
+    _switchingCamera = true;
+    final epoch = _connectEpoch;
+    try {
+      final sent = await _transport.sendControl('livestreamCameraSwitch', {'camera': target});
+      if (epoch != _connectEpoch || _replaced) return;
+      if (sent) {
+        _streamType = target;
+        _uiState.streamType = target;
+        _prevVideo = null;
+        _stallCount = 0;
+        _uiState.notifyNow();
+        _setStatus('camera switch → $target (same connection)');
+      }
+    } finally {
+      _switchingCamera = false;
+    }
   }
 
   /// listen for connection state → reconnect on failure
@@ -339,13 +480,16 @@ class ConnectionManager {
     _adapter.reset();
     _connecting = false;
     _reconnecting = false;
-    _transport.close();  // close current connection immediately
+    _setConnected(false);
+    unawaited(_transport.close().catchError((Object e) {
+      debugPrint('[opview] close failed: $e');
+    })); // client serializes cleanup before the next connect
   }
 
   /// exponential backoff reconnect, fall back to re-discovery after max retries
   void _scheduleReconnect() {
     // prevent re-entrant calls (state listener + catch block firing together)
-    if (_reconnecting || _paused) return;
+    if (_reconnecting || _paused || _replaced) return;
     _reconnecting = true;
 
     _retryTimer?.cancel();
@@ -356,7 +500,9 @@ class ConnectionManager {
     _graceTimer = null;
     _stopStats();
     _adapter.reset();
-    _transport.close();  // free server-side session
+    unawaited(_transport.close().catchError((Object e) {
+      debugPrint('[opview] close failed: $e');
+    }));
     _setConnected(false);
 
     _retryCount++;
@@ -391,8 +537,10 @@ class ConnectionManager {
 
   /// tear down current connection and re-discover
   /// tries cached host first, mDNS in parallel (handles IP changes)
-  void reconnect() {
+  void reconnect({bool automatic = false}) {
     _paused = false;
+    if (automatic && _replaced) return;
+    _replaced = false;
     _setStatus('reconnecting…');
     _teardown();
     _retryCount = 0;

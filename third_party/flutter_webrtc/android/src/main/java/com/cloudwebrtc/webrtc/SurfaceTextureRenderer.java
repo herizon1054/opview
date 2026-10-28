@@ -1,6 +1,5 @@
 package com.cloudwebrtc.webrtc;
 
-import android.graphics.SurfaceTexture;
 import android.view.Surface;
 
 import org.webrtc.EglBase;
@@ -26,6 +25,8 @@ public class SurfaceTextureRenderer extends EglRenderer {
   // Callback for reporting renderer events. Read-only after initilization so no lock required.
   private RendererCommon.RendererEvents rendererEvents;
   private final Object layoutLock = new Object();
+  private final Object surfaceLock = new Object();
+  private boolean surfaceAvailable;
   private boolean isRenderingPaused;
   private boolean isFirstFrameRendered;
   private int rotatedFrameWidth;
@@ -98,13 +99,28 @@ public class SurfaceTextureRenderer extends EglRenderer {
   // VideoSink interface.
   @Override
   public void onFrame(VideoFrame frame) {
-    if(surface == null) {
-      producer.setSize(frame.getRotatedWidth(),frame.getRotatedHeight());
-      surface = producer.getSurface();
-      createEglSurface(surface);
+    synchronized (surfaceLock) {
+      // Do not recreate a surface during Flutter's background cleanup.
+      if (!surfaceAvailable || producer == null) return;
+      if (surface == null) {
+        producer.setSize(frame.getRotatedWidth(), frame.getRotatedHeight());
+        surface = producer.getSurface();
+        createEglSurface(surface);
+      }
+      updateFrameDimensionsAndReportEvents(frame);
+      super.onFrame(frame);
     }
-    updateFrameDimensionsAndReportEvents(frame);
-    super.onFrame(frame);
+  }
+
+  @Override
+  public void release() {
+    synchronized (surfaceLock) {
+      surfaceAvailable = false;
+      surface = null;
+      producer = null;
+    }
+    // Never wait for the EGL thread while holding surfaceLock.
+    super.release();
   }
 
   private Surface surface = null;
@@ -113,17 +129,27 @@ public class SurfaceTextureRenderer extends EglRenderer {
 
   public void surfaceCreated(final TextureRegistry.SurfaceProducer producer) {
     ThreadUtils.checkIsOnMainThread();
-    this.producer = producer;
+    synchronized (surfaceLock) {
+      this.producer = producer;
+      // init/release destroys the EGLSurface even if Java Surface still exists.
+      // Force the first new frame to call createEglSurface again.
+      surface = null;
+      surfaceAvailable = true;
+    }
     this.producer.setCallback(
             new TextureRegistry.SurfaceProducer.Callback() {
               @Override
               public void onSurfaceAvailable() {
-                // Do surface initialization here, and draw the current frame.
+                synchronized (surfaceLock) {
+                  if (SurfaceTextureRenderer.this.producer != producer) return;
+                  surfaceAvailable = true;
+                  // Next frame acquires Flutter's new Surface at the correct size.
+                }
               }
 
               @Override
               public void onSurfaceCleanup() {
-                surfaceDestroyed();
+                if (SurfaceTextureRenderer.this.producer == producer) surfaceDestroyed();
               }
             }
     );
@@ -131,10 +157,13 @@ public class SurfaceTextureRenderer extends EglRenderer {
 
   public void surfaceDestroyed() {
     ThreadUtils.checkIsOnMainThread();
+    synchronized (surfaceLock) {
+      surfaceAvailable = false;
+      surface = null;
+    }
     final CountDownLatch completionLatch = new CountDownLatch(1);
     releaseEglSurface(completionLatch::countDown);
     ThreadUtils.awaitUninterruptibly(completionLatch);
-    surface = null;
   }
 
   // Update frame dimensions and report any changes to |rendererEvents|.

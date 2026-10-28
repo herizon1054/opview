@@ -206,9 +206,13 @@ class ModelRendererPainter extends CustomPainter {
       final vRel = (lead['vRel'] as num?)?.toDouble() ?? 0;
       final yRel = (lead['yRel'] as num?)?.toDouble();
       if (dRel == null || yRel == null || !dRel.isFinite ||
-          !yRel.isFinite || !vRel.isFinite || dRel <= 0) continue;
+          !yRel.isFinite || !vRel.isFinite || dRel <= 0) {
+        continue;
+      }
       if (state.lastRadarAt != null &&
-          DateTime.now().difference(state.lastRadarAt!).inMilliseconds > 2000) continue;
+          DateTime.now().difference(state.lastRadarAt!).inMilliseconds > 2000) {
+        continue;
+      }
       final idx = _getPathLengthIdx(pathX, dRel);
 
       final z = (idx < state.pathZ.length) ? state.pathZ[idx] : 0.0;
@@ -229,7 +233,8 @@ class ModelRendererPainter extends CustomPainter {
 
   // A projected radar marker, not an image-detection bounding box.
   void _drawLeadBox(Canvas canvas, Offset point, double distance, double vLead) {
-    final scale = (contentRect.height / 600).clamp(0.6, 2.0);
+    // 依短邊縮放：橫向 = 高（與原本相同），直向 = 寬，兩種方向外觀一致
+    final scale = (min(contentRect.width, contentRect.height) / 600).clamp(0.6, 2.0);
     final width = (1500 / distance).clamp(28.0, 85.0) * scale;
     final rect = Rect.fromLTWH(point.dx - width / 2, point.dy - width, width, width * .7);
     final paint = Paint()..color = const Color(0xFF61E3D4)
@@ -376,7 +381,7 @@ class ModelRendererPainter extends CustomPainter {
     lv.fillAlpha = fillAlpha.round();
 
     // size: bigger when closer, scaled to match stock 1080p reference
-    final scale = contentRect.height / 1080.0;
+    final scale = min(contentRect.width, contentRect.height) / 1080.0; // 依短邊（直向一致）
     final sz = ((25 * 30) / (dRel / 3 + 30)).clamp(15.0, 30.0) * 2.35 * scale;
     final x = point.dx.clamp(0.0, contentRect.width - sz / 2);
     final y = min(point.dy, contentRect.height - sz * 0.6);

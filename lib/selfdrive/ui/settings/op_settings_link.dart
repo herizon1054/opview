@@ -3,7 +3,6 @@
 // serverd 在 dp0111pre 是 always_run：offroad 也能開，可用來打開「啟用 opview」等設定。
 // IP 來源：目前連線 / mDNS 找到 / 快取的 comma IP；都沒有時讓使用者手動輸入（記住供下次使用）。
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:opview/services/viewer_system.dart' as system;

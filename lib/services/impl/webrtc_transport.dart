@@ -2,6 +2,7 @@
 // Connects to webrtcd for video + data channel
 
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:opview/services/transport.dart';
 import 'package:opview/system/webrtc/webrtc_client.dart';
@@ -31,6 +32,12 @@ class WebRTCTransport implements Transport {
   dynamic get videoRenderer => _client.videoRenderer;
 
   @override
+  Listenable get rendererChanges => _client.renderer;
+
+  @override
+  Future<bool> sendControl(String type, Map<String, dynamic> data) => _client.sendControl(type, data);
+
+  @override
   Future<void> connect(String host, {String camera = 'road'}) async {
     // Listen to WebRTC connection state and translate to TransportState
     _clientStateSub?.cancel();
@@ -57,6 +64,9 @@ class WebRTCTransport implements Transport {
 
   @override
   Future<String?> statsSummary() => _client.statsSummary();
+
+  @override
+  VideoCounters? get lastVideoCounters => _client.lastVideoCounters;
 
   @override
   Future<void> close() async {

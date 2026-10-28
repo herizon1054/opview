@@ -39,35 +39,37 @@ class WebrtcdHttpException implements Exception {
 }
 
 /// exchange SDP with webrtcd, returns answer SDP
-Future<Map<String, dynamic>> postStream(String host, String offerSdp, {String camera = 'road'}) async {
+Future<Map<String, dynamic>> postStream(String host, String offerSdp, {String camera = 'road', http.Client? client}) async {
   if (_hostsWithoutOptional.contains(host)) {
-    return _postStream(host, offerSdp, camera, bridgeServicesOut);
+    return _postStream(host, offerSdp, camera, bridgeServicesOut, client);
   }
   try {
     return await _postStream(host, offerSdp, camera,
-        [...bridgeServicesOut, ...optionalBridgeServicesOut]);
+        [...bridgeServicesOut, ...optionalBridgeServicesOut], client);
   } on WebrtcdHttpException catch (e) {
     if (e.statusCode != 500) rethrow;
     // 失敗的請求在建立 session 前就丟例外，同一份 offer 可以直接重送
-    final answer = await _postStream(host, offerSdp, camera, bridgeServicesOut);
+    final answer = await _postStream(host, offerSdp, camera, bridgeServicesOut, client);
     _hostsWithoutOptional.add(host);
     return answer;
   }
 }
 
 Future<Map<String, dynamic>> _postStream(
-    String host, String offerSdp, String camera, List<String> services) async {
+    String host, String offerSdp, String camera, List<String> services, http.Client? client) async {
   final request = StreamRequest(
     sdp: offerSdp,
     cameras: [camera],
     bridgeServicesOut: services,
   );
 
-  final url = Uri.parse('http://$host:5001/stream');
-  final response = await http.post(
+  final body = request.toJson()..remove('cameras');
+  body['initCamera'] = camera;
+  final url = Uri(scheme: 'http', host: host, port: 5001, path: '/stream');
+  final response = await (client?.post ?? http.post)(
     url,
     headers: {'Content-Type': 'application/json'},
-    body: jsonEncode(request.toJson()),
+    body: jsonEncode(body),
   ).timeout(const Duration(seconds: 10));
 
   if (response.statusCode != 200) {

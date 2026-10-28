@@ -13,8 +13,9 @@ void main() {
   AppLog.instance.install();
   AppLog.instance.init();
 
-  // landscape only, like the real thing
+  // 直向 / 橫向都可：主畫面與 opview 畫面依方向切換排版（不含倒立直向）
   SystemChrome.setPreferredOrientations([
+    DeviceOrientation.portraitUp,
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);

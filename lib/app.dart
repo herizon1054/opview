@@ -3,7 +3,6 @@
 // 顯示設定「打開 App 自動進入 opview」開啟時直接進 opview 畫面；opview 畫面「退出」或 Android 返回鍵回主畫面。
 // 連線（探索 / WebRTC）在主畫面時也持續進行：進入 opview 立即有畫面，主畫面也能取得 comma IP 讀寫車型。
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:opview/selfdrive/ui/ui_state.dart';
 import 'package:opview/selfdrive/ui/onroad/augmented_road_view.dart';
@@ -52,7 +51,9 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
       // time to complete instead of tearing down a healthy connection.
       Future<void>.delayed(const Duration(milliseconds: 250), () {
         if (mounted && epoch == _lifecycleEpoch && !system.pipMode.value &&
-            _lifecycle == AppLifecycleState.paused) _pauseStream();
+            _lifecycle == AppLifecycleState.paused) {
+          _pauseStream();
+        }
       });
     }
   }
@@ -118,7 +119,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     final epoch = ++_lifecycleEpoch;
     if (state == AppLifecycleState.resumed && _streamPaused) {
       _streamPaused = false;
-      _connectionManager.reconnect();
+      _connectionManager.reconnect(automatic: true);
       _updatePipOffer();
     } else if (state == AppLifecycleState.paused) {
       // Query native state to avoid racing the PiP callback while entering PiP.
@@ -151,7 +152,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
                   canPop: false,
                   onPopInvokedWithResult: (didPop, _) { if (!didPop) _goHome(); },
                   child: ListenableBuilder(
-                    listenable: Listenable.merge([_uiState, _settings, system.pipMode, system.pipSupported]),
+                    listenable: Listenable.merge([_uiState, _settings, system.pipMode, system.pipSupported, _connectionManager.rendererChanges]),
                     builder: (context, _) => AugmentedRoadView(
                       settings: _settings,
                       pip: system.pipMode.value,
@@ -159,6 +160,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
                       videoRenderer: _connectionManager.videoRenderer,
                       opHost: () => _connectionManager.lastKnownHost,
                       onExit: _goHome,
+                      onReconnect: () => _connectionManager.reconnect(),
                     ),
                   ),
                 ),

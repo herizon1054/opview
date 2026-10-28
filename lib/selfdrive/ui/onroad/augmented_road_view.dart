@@ -10,6 +10,7 @@
 import 'dart:math';
 import 'dart:async';
 import 'dashboard_hud.dart';
+import 'portrait_panel.dart';
 import 'compact_hud.dart';
 import 'throttled_hud.dart';
 import 'tdx_marquee.dart';
@@ -46,6 +47,7 @@ class AugmentedRoadView extends StatefulWidget {
   final String? Function()? opHost;
   /// 退出到主畫面；null = 不顯示「退出」
   final VoidCallback? onExit;
+  final VoidCallback? onReconnect;
 
   const AugmentedRoadView({
     super.key,
@@ -57,6 +59,7 @@ class AugmentedRoadView extends StatefulWidget {
     this.pip = false,
     this.opHost,
     this.onExit,
+    this.onReconnect,
   });
 
   @override
@@ -187,7 +190,6 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
   Widget _railButton(_RailItem item, double height, double t) {
     final iconSize = _railIconMin + (_railIconMax - _railIconMin) * t;
     final fontSize = _railFontMin + (_railFontMax - _railFontMin) * t;
-    final fg = item.dimmed ? Colors.white38 : null;
     return Padding(padding: const EdgeInsets.symmetric(vertical: _railBtnGapV, horizontal: 6),
       child: SizedBox(height: height, child: Material(
         color: const Color(0xFF182127), borderRadius: BorderRadius.circular(12 + 2 * t),
@@ -196,10 +198,10 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
         child: InkWell(onTap: () { _cancelAutoFullscreen(); item.onTap(); },
           child: Padding(padding: const EdgeInsets.symmetric(horizontal: 4),
             child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Icon(item.icon, color: fg ?? dashboardTeal, size: iconSize),
+              Icon(item.icon, color: dashboardTeal, size: iconSize),
               SizedBox(height: 2 + 2 * t),
               _railLabel(item.label, TextStyle(fontSize: fontSize, height: 1.15,
-                  color: fg ?? Colors.white70)),
+                  color: Colors.white70)),
             ]))),
       )));
   }
@@ -233,8 +235,10 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
     if (widget.settings?.pictureInPicture == true && system.pipSupported.value && widget.uiState.isConnected)
       _RailItem(Icons.picture_in_picture_alt, '子母畫面', () async {
         final entered = await system.enterPip();
-        if (!entered && mounted) ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Android 未允許進入子母畫面')));
+        if (!entered && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Android 未允許進入子母畫面')));
+        }
       }),
     _RailItem(Icons.fullscreen, '全螢幕', _enterFullscreen),
     if (widget.onExit != null)
@@ -323,16 +327,21 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
     [0, 0, 0], [0, 0, 0], [0, 0, 0],
   ];
 
+  /// 直向：操作列放到影像下方（橫向放左側）。PiP 小窗一律視為橫向。
+  bool _isPortrait(BuildContext context) {
+    final size = MediaQuery.sizeOf(context);
+    return !widget.pip && size.height > size.width;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-        if (_showRail && widget.showControls && !widget.pip) _rail(),
-        Expanded(child: LayoutBuilder(builder: (context, constraints) {
+    final portrait = _isPortrait(context);
+    final showBar = _showRail && widget.showControls && !widget.pip;
+    final videoStack = LayoutBuilder(builder: (context, constraints) {
         final screenW = constraints.maxWidth;
         final screenH = constraints.maxHeight;
-        final scale = screenH / 1080.0;
+        // HUD / 警示 / 邊框依「短邊」縮放：橫向 = 高（與原本相同），直向 = 寬（避免直向時被放大到超出寬度）
+        final scale = min(screenW, screenH) / 1080.0;
         final borderSize = (widget.pip || widget.uiState.modernOverlay ? 3 : uiBorderSize) * scale;
 
         // recompute transform only when inputs change
@@ -387,17 +396,19 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                               widget.uiState.leftBlinker, widget.uiState.rightBlinker,
                               widget.uiState.gearShifter),
                             builder: () => Stack(fit: StackFit.expand, children: [
-                              if (widget.uiState.modernOverlay)
-                                DashboardHud(state: widget.uiState, stale: _stale)
-                              else if (!_stale) HudRenderer(uiState: widget.uiState, scale: scale),
+                              // 直向（方案 B）：儀表卡片移到影像下方的 PortraitPanel，影像上只留方向燈
+                              if (widget.uiState.modernOverlay) ...[
+                                if (!portrait) DashboardHud(state: widget.uiState, stale: _stale)
+                                else if (!_stale) ..._portraitBlinkers(screenH),
+                              ] else if (!_stale) HudRenderer(uiState: widget.uiState, scale: scale),
                               if (widget.settings?.layout == ViewerLayout.detailed)
                                 VehicleDetails(state: widget.uiState, stale: _stale),
                             ]),
                           ),
                         ],
                         if (!widget.pip && _showDetails && widget.uiState.alertSize == 0) _details(),
-                        if (!widget.pip) _tdxMarquee(scale, screenW),
-                        if (!widget.pip) AlertRenderer(uiState: widget.uiState, scale: scale,
+                        if (!widget.pip && !portrait) _tdxMarquee(scale, screenW),
+                        if (!widget.pip && !portrait) AlertRenderer(uiState: widget.uiState, scale: scale,
                           compact: widget.uiState.modernOverlay),
                       ],
                     ),
@@ -459,14 +470,112 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                   ),
                 )),
 
+              if (!widget.pip && !widget.uiState.isConnected && widget.onReconnect != null)
+                Positioned(
+                  bottom: 24,
+                  left: 24,
+                  child: ElevatedButton.icon(
+                    onPressed: widget.onReconnect,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('重新連線'),
+                  ),
+                ),
+
               // layer 4: 退出全螢幕（永遠在最上層）
               if (!widget.pip && !_showRail && widget.showControls)
                 _exitFullscreenButton(),
             ],
           ),
         );
-      })),
-      ]),
+      });
+    if (!portrait) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          if (showBar) _rail(),
+          Expanded(child: videoStack),
+        ]),
+      );
+    }
+    // 直向（方案 B）：影像依相機比例完整顯示在上方 → 儀表 / TDX / 警示區 → 操作列
+    final bottomInset = MediaQuery.paddingOf(context).bottom;
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(bottom: false, child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        AspectRatio(aspectRatio: _videoAspect(), child: videoStack),
+        Expanded(child: Padding(
+          padding: EdgeInsets.only(bottom: showBar ? 0 : bottomInset),
+          child: MediaQuery(
+            data: MediaQuery.of(context).copyWith(textScaler: TextScaler.noScaling),
+            child: ThrottledHud(
+              version: widget.uiState.version,
+              every: widget.settings?.hudEvery ?? 4,
+              invalidateKey: (_stale, widget.uiState.isMetric, widget.uiState.modernOverlay,
+                widget.uiState.status, widget.uiState.experimentalMode,
+                widget.uiState.alertSize, widget.uiState.alertText1, widget.uiState.leadDistance != null,
+                widget.uiState.tdxNextSpeedDisplay, widget.uiState.tdxCongestion,
+                widget.uiState.tdxEventText, widget.uiState.gearShifter),
+              builder: () => PortraitPanel(state: widget.uiState, stale: _stale),
+            ),
+          ),
+        )),
+        if (showBar) _bottomBar(),
+      ])),
+    );
+  }
+
+  /// 直向影像區比例 = 目前串流相機（road / wideRoad）的原始比例，
+  /// 影像以 cover 填入時剛好不裁切，投影（路徑、前車框）與畫面一致
+  double _videoAspect() {
+    final cam = _lookupCamera();
+    final c = widget.uiState.streamType == 'wideRoad' ? cam.ecam : cam.fcam;
+    return c.width > 0 && c.height > 0 ? c.width / c.height : 1928 / 1208;
+  }
+
+  /// 直向：方向燈箭頭放在影像左下 / 右下角（儀表卡片在影像下方，兩側沒有空間）
+  List<Widget> _portraitBlinkers(double videoH) {
+    final size = (videoH * .2).clamp(28.0, 52.0);
+    return [
+      if (widget.uiState.leftBlinker)
+        Positioned(left: 8, bottom: 8, child: BlinkerArrow(left: true, size: size)),
+      if (widget.uiState.rightBlinker)
+        Positioned(right: 8, bottom: 8, child: BlinkerArrow(left: false, size: size)),
+    ];
+  }
+
+  // 直向操作列：畫面最下方一排按鈕（同側欄的按鈕與順序），左側小字顯示 LIVE / OFFLINE
+  static const double _barHeight = 64;
+  Widget _bottomBar() {
+    final mq = MediaQuery.of(context);
+    final inset = mq.padding;
+    final items = _railItems();
+    return MediaQuery(
+      data: mq.copyWith(textScaler: mq.textScaler.clamp(minScaleFactor: 1.0, maxScaleFactor: 1.2)),
+      child: Container(
+        color: const Color(0xFF0D151B),
+        padding: EdgeInsets.only(left: inset.left + 4, right: inset.right + 4, bottom: inset.bottom),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          SizedBox(height: 18, child: Center(child: _railLabel(
+            widget.uiState.isConnected ? '● LIVE' : '○ OFFLINE',
+            const TextStyle(color: dashboardTeal, fontSize: 10, fontWeight: FontWeight.bold)))),
+          SizedBox(height: _barHeight, child: Row(children: [
+            for (final item in items) Expanded(child: Padding(
+              padding: const EdgeInsets.fromLTRB(2, 0, 2, 6),
+              child: Material(
+                color: const Color(0xFF182127), borderRadius: BorderRadius.circular(12),
+                clipBehavior: Clip.antiAlias,
+                child: InkWell(onTap: () { _cancelAutoFullscreen(); item.onTap(); },
+                  child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                    Icon(item.icon, color: dashboardTeal, size: 20),
+                    const SizedBox(height: 3),
+                    Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
+                      child: _railLabel(item.label, const TextStyle(fontSize: 11, height: 1.15, color: Colors.white70))),
+                  ])),
+              ),
+            )),
+          ])),
+        ]),
+      ),
     );
   }
 
@@ -477,6 +586,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
     }
     return RTCVideoView(
       widget.videoRenderer!,
+      key: ObjectKey(widget.videoRenderer),
       objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
     );
   }
@@ -631,6 +741,5 @@ class _RailItem {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-  final bool dimmed;
-  const _RailItem(this.icon, this.label, this.onTap, {this.dimmed = false});
+  const _RailItem(this.icon, this.label, this.onTap);
 }

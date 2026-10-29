@@ -58,6 +58,15 @@ class AppLog {
         _writeRaw(l);
       }
       _pending.clear();
+      // 上次程式怎麼結束的（閃退 / ANR / 被系統回收…），見 MainActivity.lastExitReport
+      try {
+        final exits = await _channel.invokeListMethod<String>('lastExit');
+        for (final l in exits ?? const <String>[]) {
+          _writeRaw(l);
+        }
+      } catch (e) {
+        _writeRaw('prev exit 查詢失敗：$e');
+      }
       // H.264 解碼器能力：c2.qti 若不支援 1928×1208，WebRTC 會退回軟體解碼（每幀約 120 ms）
       try {
         final codecs = await _channel.invokeListMethod<String>('codecs', {'width': 1928, 'height': 1208});

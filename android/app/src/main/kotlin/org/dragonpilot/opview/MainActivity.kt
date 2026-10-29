@@ -102,8 +102,92 @@ class MainActivity: FlutterActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        installCrashRecorder()
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    // ---- 閃退診斷 ----
+    // Java / Kotlin 例外（例如外掛在主執行緒丟出的 IllegalArgumentException）：寫到 last_crash.txt 再交給系統處理。
+    // 原生崩潰（SIGSEGV 等）與 ANR 由系統記錄，下次啟動用 ApplicationExitInfo 讀出（Android 11+）。
+    // 兩者都在下次啟動時由 Dart 的 AppLog 寫進 opview.log（"prev exit" 行），分享 log 就看得到。
+    private fun installCrashRecorder() {
+        val prev = Thread.getDefaultUncaughtExceptionHandler()
+        if (prev is CrashRecorder) return
+        Thread.setDefaultUncaughtExceptionHandler(CrashRecorder(File(filesDir, "last_crash.txt"), prev))
+    }
+
+    private class CrashRecorder(val file: File, val prev: Thread.UncaughtExceptionHandler?) :
+        Thread.UncaughtExceptionHandler {
+        override fun uncaughtException(t: Thread, e: Throwable) {
+            try {
+                val sw = java.io.StringWriter()
+                e.printStackTrace(java.io.PrintWriter(sw))
+                file.writeText("time=${System.currentTimeMillis()} thread=${t.name}\n" + sw.toString().take(20_000))
+            } catch (_: Throwable) {}
+            prev?.uncaughtException(t, e)
+        }
+    }
+
+    private fun exitReasonName(r: Int): String = when (r) {
+        1 -> "EXIT_SELF"; 2 -> "SIGNALED"; 3 -> "LOW_MEMORY"; 4 -> "CRASH(Java)"; 5 -> "CRASH_NATIVE"
+        6 -> "ANR"; 7 -> "INITIALIZATION_FAILURE"; 8 -> "PERMISSION_CHANGE"; 9 -> "EXCESSIVE_RESOURCE_USAGE"
+        10 -> "USER_REQUESTED"; 11 -> "USER_STOPPED"; 12 -> "DEPENDENCY_DIED"; 13 -> "OTHER"
+        14 -> "FREEZER"; 15 -> "PACKAGE_STATE_CHANGE"; 16 -> "PACKAGE_UPDATED"
+        else -> "UNKNOWN($r)"
+    }
+
+    /** 上次（以及之前尚未回報過的）程式結束原因；每筆只回報一次 */
+    private fun lastExitReport(): List<String> {
+        val out = ArrayList<String>()
+        val marker = File(filesDir, "last_exit_reported.txt")
+        val reported = try { marker.readText().trim().toLong() } catch (_: Exception) { 0L }
+        var newest = reported
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val am = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
+                val infos = am.getHistoricalProcessExitReasons(packageName, 0, 5)
+                for (info in infos.sortedBy { it.timestamp }) {
+                    if (info.timestamp <= reported) continue
+                    if (info.timestamp > newest) newest = info.timestamp
+                    val ts = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.US)
+                        .format(java.util.Date(info.timestamp))
+                    out.add("prev exit $ts ${exitReasonName(info.reason)} status=${info.status} " +
+                        "importance=${info.importance} desc=${info.description ?: ""}")
+                    if (info.reason == 5 || info.reason == 6) { // CRASH_NATIVE / ANR
+                        try {
+                            info.traceInputStream?.use { ins ->
+                                val bytes = ins.readBytes()
+                                val lines = if (info.reason == 6) {
+                                    // ANR：文字 trace，只取主執行緒那段
+                                    val text = String(bytes)
+                                    val i = text.indexOf("\"main\"")
+                                    (if (i >= 0) text.substring(i) else text).lineSequence().take(60).toList()
+                                } else {
+                                    // 原生崩潰：tombstone（protobuf），抽出可讀字串（signal、abort 訊息、.so 與函式名稱）
+                                    Regex("[\\x20-\\x7e]{6,}").findAll(String(bytes, Charsets.ISO_8859_1))
+                                        .map { it.value }
+                                        .filter { it.contains(".so") || it.contains("SIG") || it.contains("Abort") ||
+                                            it.contains("abort") || it.contains("fault") || it.contains("Java_") ||
+                                            it.contains("::") || it.contains("cause") }
+                                        .distinct().take(80).toList()
+                                }
+                                for (l in lines) out.add("prev exit trace: $l")
+                            }
+                        } catch (e: Exception) { out.add("prev exit trace 讀取失敗：${e.message}") }
+                    }
+                }
+            } catch (e: Exception) { out.add("prev exit 查詢失敗：${e.message}") }
+        }
+        val crash = File(filesDir, "last_crash.txt")
+        if (crash.exists()) {
+            try {
+                crash.readText().lineSequence().take(80).forEach { out.add("prev crash: $it") }
+            } catch (_: Exception) {}
+            crash.delete()
+        }
+        if (newest > reported) try { marker.writeText(newest.toString()) } catch (_: Exception) {}
+        return out
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -126,6 +210,7 @@ class MainActivity: FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, LOG_CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "dir" -> result.success(filesDir.absolutePath)
+                "lastExit" -> Thread { val r = lastExitReport(); runOnUiThread { result.success(r) } }.start()
                 "info" -> {
                     val m = HashMap<String, Any>()
                     m["manufacturer"] = Build.MANUFACTURER

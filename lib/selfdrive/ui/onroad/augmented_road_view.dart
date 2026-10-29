@@ -407,8 +407,12 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                         ],
                         if (!widget.pip && _showDetails && widget.uiState.alertSize == 0) _details(),
                         if (!widget.pip && !portrait) _tdxMarquee(scale, screenW),
-                        if (!widget.pip && !portrait) AlertRenderer(uiState: widget.uiState, scale: scale,
-                          compact: widget.uiState.modernOverlay),
+                        // comma 事件（接管方向盤等 alert）：直向、橫向都貼在道路畫面底部。
+                        // 直向影像只有約 244 dp 高，依短邊算的 scale 太小 → 改用寬度 / 1500（字約 16 sp），
+                        // 且高度依字級決定（不用 stock 固定高度，避免蓋掉太多道路畫面）
+                        if (!widget.pip) AlertRenderer(uiState: widget.uiState,
+                          scale: portrait ? max(scale, screenW / 1500) : scale,
+                          compact: widget.uiState.modernOverlay, fitHeight: portrait),
                       ],
                     ),
                   ),
@@ -514,8 +518,10 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                 widget.uiState.alertSize, widget.uiState.alertText1, widget.uiState.leadDistance != null,
                 widget.uiState.tdxNextSpeedDisplay, widget.uiState.tdxCongestion,
                 widget.uiState.tdxEventText, widget.uiState.gearShifter,
-                widget.uiState.leftBlinker, widget.uiState.rightBlinker),
-              builder: () => PortraitPanel(state: widget.uiState, stale: _stale),
+                widget.uiState.leftBlinker, widget.uiState.rightBlinker,
+                widget.settings?.lineNotify ?? false),
+              builder: () => PortraitPanel(state: widget.uiState, stale: _stale,
+                  lineEnabled: widget.settings?.lineNotify ?? false),
             ),
           ),
         )),

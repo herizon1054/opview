@@ -9,6 +9,7 @@ import 'package:opview/selfdrive/ui/onroad/augmented_road_view.dart';
 import 'package:opview/selfdrive/ui/home/home_page.dart';
 import 'package:opview/services/connection_manager.dart';
 import 'package:opview/services/viewer_settings.dart';
+import 'package:opview/services/line_notifications.dart';
 import 'package:opview/services/viewer_system.dart' as system;
 import 'package:opview/selfdrive/ui/settings/op_settings_link.dart' show opSettingsGuardState;
 
@@ -41,6 +42,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     _uiState.isMetric = _settings.metric;
     _uiState.tdxEnabled = _settings.tdx;
     _uiState.modernOverlay = _settings.layout != ViewerLayout.classic;
+    LineNotifications.instance.setEnabled(_settings.lineNotify);
     _uiState.notifyNow();
     _updatePipOffer();
   }

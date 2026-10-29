@@ -19,6 +19,7 @@ import android.view.WindowManager
 import androidx.annotation.RequiresApi
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity: FlutterActivity() {
@@ -258,6 +259,17 @@ class MainActivity: FlutterActivity() {
             }
         }
 
+        // LINE 通知（OpviewNotificationListener → Dart）
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, "org.dragonpilot.opview/line")
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    OpviewNotificationListener.sink = { m -> events?.success(m) }
+                }
+                override fun onCancel(arguments: Any?) {
+                    OpviewNotificationListener.sink = null
+                }
+            })
+
         val system = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYSTEM_CHANNEL)
         systemChannel = system
         system.setMethodCallHandler { call, result ->
@@ -297,6 +309,22 @@ class MainActivity: FlutterActivity() {
                             result.success(true)
                         } catch (e: Exception) { result.success(false) }
                     }
+                }
+                // 是否已授權「通知存取權」（讀取 LINE 通知）
+                "notificationAccess" -> {
+                    val enabled = android.provider.Settings.Secure.getString(
+                        contentResolver, "enabled_notification_listeners") ?: ""
+                    result.success(enabled.split(":").any {
+                        android.content.ComponentName.unflattenFromString(it)?.packageName == packageName })
+                }
+                // 開啟系統「通知存取權」設定頁
+                "openNotificationAccess" -> {
+                    try {
+                        val i = Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(i)
+                        result.success(true)
+                    } catch (e: Exception) { result.success(false) }
                 }
                 "isInPip" -> result.success(
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode)

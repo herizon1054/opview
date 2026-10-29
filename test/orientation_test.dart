@@ -75,7 +75,7 @@ void main() {
     state.dispose();
   });
 
-  testWidgets('opview portrait: TDX row and event in the panel, alert at panel bottom', (tester) async {
+  testWidgets('opview portrait: TDX row and event in the panel, comma alert at video bottom', (tester) async {
     setSize(tester, const Size(390, 844));
     final state = createMockUIState()..modernOverlay = true;
     state.applyTdx({'nextSpeed': 62, 'congestion': 'smooth',
@@ -89,9 +89,11 @@ void main() {
     expect(tester.getRect(find.text('前方車速')).top, greaterThan(videoH));
     expect(find.text('TDX 順暢'), findsOneWidget);
     expect(tester.getRect(find.textContaining('施工').first).top, greaterThan(videoH));
+    // comma 事件（alert）貼在道路畫面底部，不在下方資訊區
     final alert = tester.getRect(find.text('請握住方向盤'));
-    expect(alert.top, greaterThan(tester.getRect(find.text('前方車速')).bottom));
-    expect(alert.bottom, lessThan(844 - 64));   // 在操作列上方
+    expect(alert.bottom, lessThanOrEqualTo(videoH));
+    expect(alert.top, greaterThan(videoH / 2));
+    expect(tester.widget<Text>(find.text('請握住方向盤')).style!.fontSize, greaterThan(14)); // 直向字級不會太小
     await tester.pumpWidget(const SizedBox.shrink());
     state.dispose();
   });

@@ -242,26 +242,11 @@ class MainActivity: FlutterActivity() {
                                 "${w}x${h}@20fps=${vc.areSizeAndRateSupported(w, h, 20.0)}")
                         }
                     } catch (e: Exception) { out.add("查詢失敗：${e.message}") }
-                    // 實際 configure 測試（不經過 WebRTC）：找出 c2.qti 在哪種設定下會拋 IllegalArgumentException。
-                    // WebRTC 的 AndroidVideoDecoder 用 createVideoFormat(mime, 初始寬, 初始高) + 輸出到 Surface 來 configure，
-                    // 初始寬高是 libwebrtc 的預設 320x180（之後才依串流重設）。
-                    Thread {
-                        val probe = ArrayList<String>()
-                        val names = try {
-                            MediaCodecList(MediaCodecList.ALL_CODECS).codecInfos
-                                .filter { !it.isEncoder && it.supportedTypes.any { t -> t.equals("video/avc", true) } }
-                                .map { it.name }
-                        } catch (e: Exception) { emptyList() }
-                        for (name in names) {
-                            for ((pw, ph) in listOf(320 to 180, w to h)) {
-                                for (useSurface in listOf(false, true)) {
-                                    probe.add("probe $name ${pw}x${ph} ${if (useSurface) "surface" else "buffer"} → " +
-                                        configureProbe(name, pw, ph, useSurface))
-                                }
-                            }
-                        }
-                        runOnUiThread { result.success(out + probe) }
-                    }.start()
+                    // 註：之前在這裡用 MediaCodec + detached SurfaceTexture 實測 configure（configureProbe），
+                    // 該 SurfaceTexture 被 GC finalize 時在 Android 16（Xiaomi）會 SIGSEGV 閃退
+                    // （tombstone：SurfaceTexture_finalize → SurfaceTexture::setSurfaceTextureListener），已移除。
+                    // 硬體解碼器寬度上限 1920 已確認，comma 端以 max_frame_width = 1440 處理。
+                    result.success(out)
                 }
                 "share" -> {
                     val path = call.arguments as? String
@@ -323,35 +308,6 @@ class MainActivity: FlutterActivity() {
                 }
                 else -> result.notImplemented()
             }
-        }
-    }
-
-    /** 直接用 MediaCodec configure/start 一次，回傳 OK 或例外。surface 模式用 detached SurfaceTexture（不需 GL context）。 */
-    private fun configureProbe(name: String, w: Int, h: Int, useSurface: Boolean): String {
-        var codec: android.media.MediaCodec? = null
-        var st: android.graphics.SurfaceTexture? = null
-        var surface: android.view.Surface? = null
-        return try {
-            codec = android.media.MediaCodec.createByCodecName(name)
-            val fmt = android.media.MediaFormat.createVideoFormat("video/avc", w, h)
-            if (useSurface) {
-                st = android.graphics.SurfaceTexture(false)
-                surface = android.view.Surface(st)
-            } else {
-                fmt.setInteger(android.media.MediaFormat.KEY_COLOR_FORMAT,
-                    MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
-            }
-            codec.configure(fmt, surface, null, 0)
-            codec.start()
-            codec.stop()
-            "OK"
-        } catch (e: Exception) {
-            "${e.javaClass.simpleName}: ${e.message ?: ""}" +
-                (if (e is android.media.MediaCodec.CodecException) " (diag=${e.diagnosticInfo}, code=${e.errorCode})" else "")
-        } finally {
-            try { codec?.release() } catch (_: Exception) {}
-            surface?.release()
-            st?.release()
         }
     }
 }

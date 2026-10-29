@@ -2,6 +2,7 @@
 //
 // serverd 在 dp0111pre 是 always_run：offroad 也能開，可用來打開「啟用 opview」等設定。
 // 只允許 offroad 或 P 檔開啟；opview 未連線時用 serverd 的 /api/init（isOffroad）確認，連不到顯示「未連線」。
+// sunnypilot 分支（沒有 :5088）改開 https://www.sunnylink.ai/（sp 的設定在 sunnylink 雲端）。
 // IP 來源：目前連線 / mDNS 找到 / 快取的 comma IP；都沒有時讓使用者手動輸入（記住供下次使用）。
 
 import 'dart:convert';
@@ -12,6 +13,7 @@ import 'package:opview/services/viewer_system.dart' as system;
 import 'package:opview/selfdrive/ui/ui_state.dart';
 
 const opSettingsPort = 5088;
+const _manualHostKey = 'op_settings_manual_host';
 
 /// 裝置設定（comma 設定網頁）只允許 offroad 或 P 檔時開啟。app.dart 啟動時設定。
 UIState? opSettingsGuardState;
@@ -45,17 +47,51 @@ String? decideOpSettings(UIState? s, bool? commaOffroad) {
       '請先在 opview 連線後於 P 檔開啟，或熄火（offroad）後再開啟。';
 }
 
-/// 問 comma serverd（always_run，offroad 也在）是否 offroad；連不到回傳 null
-Future<bool?> fetchCommaOffroad(String host, {http.Client? client}) async {
+/// comma 上跑的分支
+enum CommaBranch {
+  /// dragonpilot 系（dp0111pre、dplcc…）：有 dashy serverd（:5088，always_run）
+  dp,
+  /// sunnypilot 系：沒有 :5088，設定在雲端 sunnylink
+  sp,
+  /// 連不到 comma（逾時 / 網路不通）
+  unknown,
+}
+
+const sunnylinkUrl = 'https://www.sunnylink.ai/';
+
+/// 判斷分支並取得 offroad 狀態（offroad 只有 dp 拿得到）。
+///   1. GET :5088/api/init 回 JSON 且有 dp_dev_dashy → dp（isOffroad 一併取得）
+///   2. :5088 連線被拒（主機在、但沒有 dashy）→ sp；
+///      webrtcd 有開時再用 GET :5001/schema?services=selfdriveStateSP 確認（sp 專屬 cereal service）
+///   3. 逾時 / 其他錯誤 → unknown（未連線）
+Future<({CommaBranch branch, bool? offroad})> probeComma(String host, {http.Client? client}) async {
+  final get = client?.get ?? http.get;
   try {
-    final uri = Uri(scheme: 'http', host: host, port: opSettingsPort, path: '/api/init');
-    final r = await (client?.get ?? http.get)(uri).timeout(const Duration(seconds: 3));
-    if (r.statusCode != 200) return null;
-    final v = (jsonDecode(r.body) as Map<String, dynamic>)['isOffroad'];
-    return v is bool ? v : null;
-  } catch (_) {
-    return null;
+    final r = await get(Uri(scheme: 'http', host: host, port: opSettingsPort, path: '/api/init'))
+        .timeout(const Duration(seconds: 3));
+    if (r.statusCode == 200) {
+      final j = jsonDecode(r.body);
+      if (j is Map && j.containsKey('dp_dev_dashy')) {
+        final off = j['isOffroad'];
+        return (branch: CommaBranch.dp, offroad: off is bool ? off : null);
+      }
+    }
+    return (branch: CommaBranch.unknown, offroad: null);
+  } catch (e) {
+    if (!_isConnectionRefused(e)) return (branch: CommaBranch.unknown, offroad: null);
   }
+  // 主機在線但沒有 dashy → sunnypilot。webrtcd 有開時順便確認（失敗不影響判斷）
+  try {
+    final r = await get(Uri(scheme: 'http', host: host, port: 5001, path: '/schema',
+        queryParameters: {'services': 'selfdriveStateSP'})).timeout(const Duration(seconds: 2));
+    debugPrint('[opview] comma probe: :5001/schema selfdriveStateSP → ${r.statusCode}');
+  } catch (_) {}
+  return (branch: CommaBranch.sp, offroad: null);
+}
+
+bool _isConnectionRefused(Object e) {
+  final t = e.toString();
+  return t.contains('Connection refused') || t.contains('errno = 111');
 }
 
 Future<String?> _askHost(BuildContext context, String? initial) {
@@ -110,24 +146,39 @@ Future<void> openOpSettings(BuildContext context, String? host, {bool forceAsk =
     await prefs?.setString(_manualHostKey, target);
   }
 
-  // offroad／P 檔檢查：opview 有即時資料時直接判斷，否則問 comma serverd
+  // 判斷分支（dp：comma 本機設定網頁；sp：sunnylink 雲端）＋ offroad／P 檔檢查
   final s = opSettingsGuardState;
   final live = hasLiveData(s);
-  final offroad = live ? null : await fetchCommaOffroad(target);
-  final blocked = decideOpSettings(s, offroad);
-  if (blocked != null) {
-    debugPrint('[opview] OP settings blocked: connected=$live started=${s?.started} '
-        'gear=${s?.gearShifter} serverdOffroad=$offroad host=$target');
+  final probe = await probeComma(target);
+  debugPrint('[opview] comma branch: ${probe.branch.name} (host $target, offroad ${probe.offroad})');
+  final String? blocked;
+  final String url;
+  switch (probe.branch) {
+    case CommaBranch.dp:
+      blocked = decideOpSettings(s, live ? null : probe.offroad);
+      url = 'http://$target:$opSettingsPort';
+    case CommaBranch.sp:
+      // sunnypilot 沒有本機 offroad 查詢介面；opview 有即時資料時照樣擋行駛中，
+      // 沒有即時資料時放行（sunnylink 是雲端網頁，comma 有回應代表已連上同一網路）
+      blocked = live ? decideOpSettings(s, null) : null;
+      url = sunnylinkUrl;
+    case CommaBranch.unknown:
+      blocked = opSettingsNotConnected;
+      url = '';
+  }
+  final msg = blocked;
+  if (msg != null) {
+    debugPrint('[opview] OP settings blocked: branch=${probe.branch.name} connected=$live '
+        'started=${s?.started} gear=${s?.gearShifter} offroad=${probe.offroad} host=$target');
     if (!context.mounted) return;
     await showDialog<void>(context: context, builder: (ctx) => AlertDialog(
       title: const Text('裝置設定'),
-      content: Text(blocked),
+      content: Text(msg),
       actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('確定'))],
     ));
     return;
   }
 
-  final url = 'http://$target:$opSettingsPort';
   debugPrint('[opview] open OP settings $url');
   final ok = await system.openUrl(url);
   if (!ok) messenger?.showSnackBar(SnackBar(content: Text('無法開啟瀏覽器：$url')));

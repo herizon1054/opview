@@ -166,3 +166,13 @@ flutter build apk --release
   主畫面車型區塊下方顯示「此分支不支援 TDX」，log 記一行 `TDX: 此分支不支援 TDX`。
 - 測試：`test/device_settings_guard_test.dart`。
 
+## 19. 判斷 comma 分支（dp / sp），sp 的裝置設定改開 sunnylink（2026-10-29）
+- 依據（對照 sunnypilot-hkg-enhanced 原始碼）：sp 沒有 dashy serverd（:5088 不存在）；dp 的 serverd 是 always_run，
+  `GET :5088/api/init` 回 `{"dp_dev_dashy": …, "isOffroad": …}`。
+- `probeComma(host)`：:5088 回應含 `dp_dev_dashy` → dp；:5088 連線被拒（主機在線）→ sp
+  （webrtcd 有開時另以 `GET :5001/schema?services=selfdriveStateSP` 記錄確認，sp 專屬 service）；逾時 → 未連線。
+- 裝置設定：dp → `http://<comma>:5088`（offroad／P 檔規則同第 18 項）；sp → `https://www.sunnylink.ai/`。
+  sp 沒有本機 offroad 查詢介面：opview 有即時資料時行駛中照樣擋；沒有即時資料時放行（sunnylink 是雲端網頁）。
+- 注意（sp 端現況，未修改）：sp 的 webrtcd 只在 `IsLiveStreaming`（sunnylink 遠端直播）或 notCar 時才跑，
+  且請求格式為 `cameras: [..] + enabled`（無 `initCamera`）。opview 目前無法連上 sp 的影像串流。
+

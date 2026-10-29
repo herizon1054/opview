@@ -1,4 +1,4 @@
-// 裝置設定只允許 offroad 或 P 檔（未連線顯示「未連線」）；TDX 支援判斷
+// 裝置設定只允許 offroad 或 P 檔（未連線顯示「未連線」）；dp / sp 分支判斷；TDX 支援判斷
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -42,15 +42,34 @@ void main() {
     });
   });
 
-  test('fetchCommaOffroad 讀 /api/init 的 isOffroad；連不到回傳 null', () async {
-    final ok = MockClient((r) async {
-      expect(r.url.path, '/api/init');
-      expect(r.url.port, 5088);
-      return http.Response('{"dp_dev_dashy": true, "isOffroad": true}', 200);
+  group('判斷 comma 分支（dp / sp）', () {
+    test('dp：:5088/api/init 有 dp_dev_dashy → dp，並取得 isOffroad', () async {
+      final c = MockClient((r) async {
+        expect(r.url.path, '/api/init');
+        expect(r.url.port, 5088);
+        return http.Response('{"dp_dev_dashy": true, "isOffroad": true}', 200);
+      });
+      final p = await probeComma('dp.test', client: c);
+      expect(p.branch, CommaBranch.dp);
+      expect(p.offroad, isTrue);
     });
-    expect(await fetchCommaOffroad('comma.test', client: ok), isTrue);
-    final down = MockClient((_) async => throw http.ClientException('refused'));
-    expect(await fetchCommaOffroad('comma.test', client: down), isNull);
+
+    test('sp：:5088 連線被拒（主機在、沒有 dashy）→ sp', () async {
+      final c = MockClient((r) async {
+        if (r.url.port == 5088) {
+          throw http.ClientException('SocketException: Connection refused (OS Error: Connection refused, errno = 111)');
+        }
+        return http.Response('{"selfdriveStateSP": {}}', 200); // :5001/schema
+      });
+      final p = await probeComma('sp.test', client: c);
+      expect(p.branch, CommaBranch.sp);
+      expect(p.offroad, isNull);
+    });
+
+    test('連不到 comma（逾時 / 網路不通）→ unknown', () async {
+      final c = MockClient((_) async => throw http.ClientException('No route to host'));
+      expect((await probeComma('down.test', client: c)).branch, CommaBranch.unknown);
+    });
   });
 
   test('branch without tdx: request falls back and host is marked unsupported', () async {

@@ -65,7 +65,8 @@ class ViewerSettingsDialog extends StatelessWidget {
           if (opHost != null) ...[
             const Divider(),
             const Text('OP 設定網頁'),
-            Text('以瀏覽器開啟 comma 的設定頁（http://${opHost!() ?? '<comma IP>'}:$opSettingsPort），offroad 也可使用。',
+            Text('dragonpilot：以瀏覽器開啟 comma 的設定頁（http://${opHost!() ?? '<comma IP>'}:$opSettingsPort）；'
+              'sunnypilot：開啟 sunnylink（$sunnylinkUrl）。限 offroad 或 P 檔。',
               style: const TextStyle(fontSize: 12, color: Colors.white54)),
             Wrap(spacing: 8, children: [
               OutlinedButton.icon(icon: const Icon(Icons.open_in_browser, size: 18), label: const Text('開啟 OP 設定'),

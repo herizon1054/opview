@@ -18,7 +18,8 @@ void main() {
       settings: settings, hostGetter: () => null, onEnterOpview: () => entered++)));
     await tester.pump();
     expect(find.text('車型選擇'), findsOneWidget);
-    expect(find.text('確認'), findsOneWidget);
+    expect(find.text('確認變更'), findsOneWidget); // 尚未讀到車型：按鈕停用
+    expect(find.text('未連線'), findsOneWidget);  // 標題旁狀態
     expect(find.textContaining('目前車型'), findsOneWidget);
     for (final t in ['進入 opview', '顯示設定', '裝置設定', '離開程式']) {
       expect(find.text(t), findsOneWidget, reason: t);

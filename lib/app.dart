@@ -1,7 +1,7 @@
 // opview app shell
 // 主畫面（車型選擇 / 進入 opview / 顯示設定 / 裝置設定 / 離開）⇄ opview 畫面
 // 顯示設定「打開 App 自動進入 opview」開啟時直接進 opview 畫面；opview 畫面「退出」或 Android 返回鍵回主畫面。
-// 連線（探索 / WebRTC）在主畫面時也持續進行：進入 opview 立即有畫面，主畫面也能取得 comma IP 讀寫車型。
+// 主畫面只搜尋 comma、讀寫車型（:5088），不建立 WebRTC；進入 opview 畫面才連 webrtcd（ConnectionManager.setStreaming）。
 
 import 'package:flutter/material.dart';
 import 'package:opview/selfdrive/ui/ui_state.dart';
@@ -68,17 +68,20 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     if (_onHome) return;
     debugPrint('[opview] → home');
     setState(() => _onHome = true);
+    _connectionManager.setStreaming(false);
     _updatePipOffer();
   }
   void _enterOpview() {
     if (!_onHome) return;
     debugPrint('[opview] → opview view');
     setState(() => _onHome = false);
+    _connectionManager.setStreaming(true);
     _updatePipOffer();
   }
   Future<void> _loadSettings() async {
     await _settings.load();
     _onHome = !_settings.autoEnterOpview;
+    _connectionManager.setStreaming(!_onHome);
     if (mounted) setState(() => _ready = true);
   }
 
@@ -147,6 +150,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
               ? HomePage(
                   settings: _settings,
                   hostGetter: () => _connectionManager.lastKnownHost,
+                  onHostUnreachable: _connectionManager.refreshHost,
                   onEnterOpview: _enterOpview,
                 )
               // opview 畫面：Android 返回鍵回主畫面（不直接關 App）

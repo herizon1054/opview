@@ -156,7 +156,7 @@ Future<void> openOpSettings(BuildContext context, String? host, {bool forceAsk =
   switch (probe.branch) {
     case CommaBranch.dp:
       blocked = decideOpSettings(s, live ? null : probe.offroad);
-      url = 'http://$target:$opSettingsPort';
+      url = Uri(scheme: 'http', host: target, port: opSettingsPort).toString();
     case CommaBranch.sp:
       // sunnypilot 沒有本機 offroad 查詢介面；opview 有即時資料時照樣擋行駛中，
       // 沒有即時資料時放行（sunnylink 是雲端網頁，comma 有回應代表已連上同一網路）

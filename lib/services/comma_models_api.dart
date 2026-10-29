@@ -49,9 +49,23 @@ CommaModels parseModels(Map<String, dynamic> json) {
   return CommaModels(sorted, (json['selected_model'] ?? '').toString());
 }
 
+// 註：URL 一律用 Uri(host: …) 組，IPv6（含 link-local 的 %wlan0）會自動加中括號與編碼；
+// 之前用字串 'http://$host:5088' 遇到 fe80::…%wlan0 會 FormatException。
+
+/// 讀車型失敗的簡短原因（主畫面只顯示這一句，完整錯誤寫 log）
+String shortCommaError(Object e) {
+  final t = e.toString();
+  if (e is CommaApiException) return t;
+  if (t.contains('TimeoutException')) return 'comma 沒有回應';
+  if (t.contains('Connection refused')) return 'comma 設定服務未啟動';
+  if (t.contains('No route to host') || t.contains('Network is unreachable')) return '連不到 comma';
+  if (t.contains('FormatException')) return 'comma 位址格式錯誤';
+  return '連不到 comma';
+}
+
 Future<CommaModels> fetchCommaModels(String host) async {
   final r = await http
-      .get(Uri.parse('http://$host:$commaSettingsPort/api/models'))
+      .get(Uri(scheme: 'http', host: host, port: commaSettingsPort, path: '/api/models'))
       .timeout(const Duration(seconds: 5));
   if (r.statusCode != 200) throw CommaApiException('comma 回應 ${r.statusCode}');
   final body = jsonDecode(utf8.decode(r.bodyBytes));
@@ -62,7 +76,7 @@ Future<CommaModels> fetchCommaModels(String host) async {
 /// model：車型字串；null / [autoModel] = 自動偵測
 Future<void> selectCommaModel(String host, String? model) async {
   final r = await http
-      .post(Uri.parse('http://$host:$commaSettingsPort/api/models/select'),
+      .post(Uri(scheme: 'http', host: host, port: commaSettingsPort, path: '/api/models/select'),
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({'selected_model': model ?? autoModel}))
       .timeout(const Duration(seconds: 5));

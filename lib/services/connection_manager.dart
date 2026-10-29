@@ -83,6 +83,40 @@ class ConnectionManager {
 
   /// 目前或最近一次已知的 comma IP
   String? get lastKnownHost => _host ?? _lastKnownHost;
+
+  // 主畫面只需要找到 comma（車型讀寫走 :5088），不建立 WebRTC；進入 opview 畫面才連 webrtcd。
+  // 預設關閉，由 app 依目前畫面呼叫 setStreaming()。
+  bool _streamingWanted = false;
+  bool get streamingWanted => _streamingWanted;
+
+  /// true = opview 畫面（建立 WebRTC 串流）；false = 主畫面（只搜尋 comma、記住 IP，斷開 WebRTC）
+  void setStreaming(bool on) {
+    if (_streamingWanted == on) return;
+    _streamingWanted = on;
+    debugPrint('[opview] streaming ${on ? 'on（opview 畫面，連線 webrtcd）' : 'off（主畫面只找 comma，不建立 WebRTC）'}');
+    if (on) {
+      if (_paused || _replaced) return;
+      _retryCount = 0;
+      if (_host != null) {
+        _connect();
+      } else {
+        _host = _lastKnownHost;
+        if (_host != null) _connect();
+        _startDiscovery(); // IP 可能變了：同時重新搜尋
+      }
+    } else {
+      final host = _host ?? _lastKnownHost;
+      _teardown();
+      _retryCount = 0;
+      _host = host;
+    }
+  }
+
+  /// 主畫面讀不到 comma 時呼叫：重新搜尋 comma（IP 可能變了），不建立 WebRTC
+  void refreshHost() {
+    if (_paused || _replaced || _uiState.isConnected || _connecting) return;
+    _startDiscovery();
+  }
   StreamSubscription? _deviceSub;
   StreamSubscription? _dataSub;
   StreamSubscription? _stateSub;
@@ -137,7 +171,9 @@ class ConnectionManager {
     _listenConnectivity();
     _logNetwork();
 
-    final cachedHost = await _loadCachedHost();
+    var cachedHost = await _loadCachedHost();
+    // IPv6 link-local（fe80::…%wlan0）不能跨重開機沿用，也有部分 HTTP 用戶端不支援：不使用
+    if (cachedHost != null && cachedHost.contains('%')) cachedHost = null;
     if (cachedHost != null) _lastKnownHost ??= cachedHost;
     final sameSubnet = cachedHost != null && await _isOnSameSubnet(cachedHost);
     if (_paused || _replaced) return;
@@ -199,7 +235,7 @@ class ConnectionManager {
   }
 
   Future<void> _connect() async {
-    if (_connecting || _host == null || _paused || _replaced) return;
+    if (_connecting || _host == null || _paused || _replaced || !_streamingWanted) return;
     _connecting = true;
     _reconnecting = false;
     final epoch = ++_connectEpoch;
@@ -621,6 +657,7 @@ class ConnectionManager {
   }
 
   void _saveCachedHost(String host) async {
+    if (host.contains('%')) return; // IPv6 link-local 不快取（見 start()）
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_cachedHostKey, host);
   }

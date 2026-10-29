@@ -15,6 +15,8 @@ import 'package:opview/selfdrive/ui/ui_state.dart';
 import 'package:opview/services/discovery.dart';
 import 'package:opview/services/transport.dart';
 import 'package:opview/services/latency_tracker.dart';
+import 'package:opview/services/tdx_support.dart';
+import 'package:opview/system/webrtc/webrtcd_api.dart' show hostSupportsOptionalServices;
 import 'package:opview/services/adapter.dart';
 import 'package:opview/services/impl/mdns_discovery.dart';
 import 'package:opview/services/impl/subnet_scan_discovery.dart';
@@ -214,6 +216,11 @@ class ConnectionManager {
         return;
       }
       _retryCount = 0;
+      final tdx = hostSupportsOptionalServices(_host!);
+      if (tdx != null && tdx != tdxSupport.value) {
+        debugPrint('[opview] TDX: ${tdx ? '分支支援 tdx' : tdxUnsupportedText}');
+      }
+      tdxSupport.value = tdx;
       _listenState();
       _setConnected(true);
       _startStats();
@@ -413,6 +420,7 @@ class ConnectionManager {
       target = 'road';
     }
     if (target == _streamType) return;
+
     _switchingCamera = true;
     final epoch = _connectEpoch;
     try {

@@ -146,3 +146,23 @@ flutter build apk --release
   記錄每個 H.264 解碼器的寬高範圍與 `1928x1208=true/false`，用來確認。
 - 原生 log 濾掉每次建 PeerConnection 都會出現的無關訊息（duplicate codecs 等）。
 
+## 17. comma 端 webrtcd 未更新的提示（2026-10-29 車上實測 comma-5dd6a0e1 全部 HTTP 500）
+- 原因：該台 comma 尚未更新到新版 webrtcd（只認 `cameras`），新版 opview 只送 `initCamera`。
+- 決定：**不相容舊格式**（comma 端一律更新）。新格式＋tdx、新格式兩次都 500 時，錯誤訊息加上
+  「comma 端 webrtcd 可能未更新：請更新 comma 分支後重開」，會出現在連線畫面的狀態列與 log；
+  `WebrtcdHttpException.outdatedServer = true`。
+- 測試：`test/webrtc_migration_test.dart` 新增一項（兩次 500 → outdatedServer，且不改送舊格式）。
+
+## 18. 裝置設定限 offroad / P 檔；不支援 TDX 的分支顯示提示（2026-10-29）
+- 裝置設定（comma 設定網頁 :5088，主畫面按鈕與顯示設定內的「開啟 OP 設定」），`op_settings_link.dart` 的
+  `decideOpSettings()`：
+  - opview 連線中且資料 3 秒內有更新：`deviceState.started == false`（offroad）或 `gearShifter == park` 才允許。
+  - 否則問 comma serverd（always_run）`GET :5088/api/init` 的 `isOffroad`：offroad 允許；
+    onroad 但 opview 沒連上 → 無法確認檔位，不允許；**連不到 comma → 顯示「未連線」**。
+  - offroad 時 webrtcd 不跑、opview 一定未連線，所以 offroad 靠 serverd 確認（不改 comma 端）。
+- TDX：沒有 tdx service 的分支，帶 tdx 的請求 500 → 不帶 tdx 重試成功（原有機制）。新增
+  `hostSupportsOptionalServices(host)` 與 `lib/services/tdx_support.dart` 的 `tdxSupport`（true / false / null）。
+  不支援時：顯示設定的「TDX 路況顯示」開關停用並顯示「此分支不支援 TDX（comma 端沒有 tdx 服務）」，
+  主畫面車型區塊下方顯示「此分支不支援 TDX」，log 記一行 `TDX: 此分支不支援 TDX`。
+- 測試：`test/device_settings_guard_test.dart`。
+

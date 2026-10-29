@@ -29,11 +29,19 @@ const optionalBridgeServicesOut = [
 
 // 已確認不支援 optional services 的主機（只在退回重試成功後才記錄）
 final _hostsWithoutOptional = <String>{};
+// 帶 optional services 的請求成功過的主機
+final _hostsWithOptional = <String>{};
+
+/// 這台主機的分支是否支援 optional services（tdx）：true / false / null（還沒成功連線過）
+bool? hostSupportsOptionalServices(String host) => _hostsWithOptional.contains(host)
+    ? true : _hostsWithoutOptional.contains(host) ? false : null;
 
 class WebrtcdHttpException implements Exception {
   final int statusCode;
   final String body;
-  WebrtcdHttpException(this.statusCode, this.body);
+  /// 新格式請求被拒（HTTP 500），comma 端 webrtcd 可能是更新前的舊版
+  final bool outdatedServer;
+  WebrtcdHttpException(this.statusCode, this.body, {this.outdatedServer = false});
   @override
   String toString() => 'webrtcd returned $statusCode: $body';
 }
@@ -44,13 +52,24 @@ Future<Map<String, dynamic>> postStream(String host, String offerSdp, {String ca
     return _postStream(host, offerSdp, camera, bridgeServicesOut, client);
   }
   try {
-    return await _postStream(host, offerSdp, camera,
+    final answer = await _postStream(host, offerSdp, camera,
         [...bridgeServicesOut, ...optionalBridgeServicesOut], client);
+    _hostsWithOptional.add(host);
+    return answer;
   } on WebrtcdHttpException catch (e) {
     if (e.statusCode != 500) rethrow;
     // 失敗的請求在建立 session 前就丟例外，同一份 offer 可以直接重送
-    final answer = await _postStream(host, offerSdp, camera, bridgeServicesOut, client);
+    final Map<String, dynamic> answer;
+    try {
+      answer = await _postStream(host, offerSdp, camera, bridgeServicesOut, client);
+    } on WebrtcdHttpException catch (e2) {
+      if (e2.statusCode != 500) rethrow;
+      // 兩種請求都 500：最常見是 comma 端 webrtcd 還是舊版（只認 "cameras"，不認 "initCamera"）
+      throw WebrtcdHttpException(500, '${e2.body}（comma 端 webrtcd 可能未更新：請更新 comma 分支後重開）',
+          outdatedServer: true);
+    }
     _hostsWithoutOptional.add(host);
+    _hostsWithOptional.remove(host);
     return answer;
   }
 }

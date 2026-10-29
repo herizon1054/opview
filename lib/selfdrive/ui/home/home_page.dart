@@ -12,6 +12,7 @@ import 'package:opview/services/comma_models_api.dart';
 import 'package:opview/services/viewer_settings.dart';
 import 'package:opview/selfdrive/ui/settings/viewer_settings_dialog.dart';
 import 'package:opview/selfdrive/ui/settings/op_settings_link.dart';
+import 'package:opview/services/tdx_support.dart';
 
 const _teal = Color(0xFF48D1CC);
 const _card = Color(0xFF0D151B);
@@ -217,6 +218,11 @@ class _HomePageState extends State<HomePage> {
         if (_status != null)
           Padding(padding: const EdgeInsets.only(top: 4),
             child: Text(_status!, style: const TextStyle(fontSize: 12, color: Colors.white54))),
+        ValueListenableBuilder<bool?>(valueListenable: tdxSupport, builder: (context, tdx, _) =>
+          tdx == false
+            ? const Padding(padding: EdgeInsets.only(top: 4), child: Text(tdxUnsupportedText,
+                style: TextStyle(fontSize: 12, color: Colors.orangeAccent)))
+            : const SizedBox.shrink()),
       ]),
     );
   }

@@ -3,6 +3,7 @@ import 'package:opview/services/viewer_settings.dart';
 import 'package:opview/services/viewer_system.dart' as system;
 import 'package:opview/services/app_log.dart';
 import 'op_settings_link.dart';
+import 'package:opview/services/tdx_support.dart';
 
 // 分享 / 清除 log 的結果文字（顯示在對話框底部）
 final _logResult = ValueNotifier<String?>(null);
@@ -14,7 +15,7 @@ class ViewerSettingsDialog extends StatelessWidget {
   const ViewerSettingsDialog({super.key, required this.settings, this.opHost});
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: Listenable.merge([settings, system.pipSupported, system.brightnessSupported, _logResult]),
+    listenable: Listenable.merge([settings, system.pipSupported, system.brightnessSupported, _logResult, tdxSupport]),
     builder: (context, _) => AlertDialog(
       title: const Text('手機顯示設定'),
       content: SizedBox(width: 420, child: SingleChildScrollView(child: Column(
@@ -28,9 +29,16 @@ class ViewerSettingsDialog extends StatelessWidget {
             ], onChanged: (v) { if (v != null) settings.setLayout(v); }),
           SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('公制 km/h'),
             value: settings.metric, onChanged: settings.setMetric),
-          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('TDX 路況顯示'),
-            subtitle: const Text('前方車速與路況事件跑馬燈（只影響手機端顯示）'),
-            value: settings.tdx, onChanged: settings.setTdx),
+          // 目前連線的 comma 分支沒有 tdx service：開關停用並註明
+          if (tdxSupport.value == false)
+            const SwitchListTile(contentPadding: EdgeInsets.zero, title: Text('TDX 路況顯示'),
+              subtitle: Text('$tdxUnsupportedText（comma 端沒有 tdx 服務）',
+                style: TextStyle(color: Colors.orangeAccent)),
+              value: false, onChanged: null)
+          else
+            SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('TDX 路況顯示'),
+              subtitle: const Text('前方車速與路況事件跑馬燈（只影響手機端顯示）'),
+              value: settings.tdx, onChanged: settings.setTdx),
           SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('打開 App 自動進入 opview'),
             subtitle: const Text('開啟後跳過主畫面，直接進入 opview 畫面'),
             value: settings.autoEnterOpview, onChanged: settings.setAutoEnterOpview),

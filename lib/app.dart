@@ -10,6 +10,7 @@ import 'package:opview/selfdrive/ui/home/home_page.dart';
 import 'package:opview/services/connection_manager.dart';
 import 'package:opview/services/viewer_settings.dart';
 import 'package:opview/services/viewer_system.dart' as system;
+import 'package:opview/selfdrive/ui/settings/op_settings_link.dart' show opSettingsGuardState;
 
 class OpviewApp extends StatefulWidget {
   const OpviewApp({super.key});
@@ -86,6 +87,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _uiState = UIState();
+    opSettingsGuardState = _uiState; // 裝置設定只允許 offroad 或 P 檔
     _connectionManager = ConnectionManager(_uiState);
     system.listenForPip();
     system.pipMode.addListener(_pipChanged);

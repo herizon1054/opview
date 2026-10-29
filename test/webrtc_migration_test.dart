@@ -68,6 +68,20 @@ void main() {
     client.close();
   });
 
+  test('outdated comma webrtcd (500 for both requests) is reported clearly', () async {
+    var requests = 0;
+    final client = MockClient((_) async {
+      requests++;
+      return http.Response('500 Internal Server Error', 500);
+    });
+    await expectLater(postStream('outdated.test', 'offer', client: client),
+        throwsA(isA<WebrtcdHttpException>()
+            .having((e) => e.outdatedServer, 'outdatedServer', isTrue)
+            .having((e) => e.toString(), 'message', contains('未更新'))));
+    expect(requests, 2); // 新格式+tdx、新格式；不會改送舊格式
+    client.close();
+  });
+
   test('400 is surfaced without retrying a new session', () async {
     var requests = 0;
     final client = MockClient((_) async {

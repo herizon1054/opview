@@ -29,6 +29,11 @@ class UIState extends ChangeNotifier {
   bool modernOverlay = true;
   DateTime? lastModelAt;
   DateTime? lastRadarAt;
+  /// 最新一筆資料比「最順時」多晚到（ms，由 ConnectionManager 依 logMonoTime 計算）。
+  /// 超過 [dataLagLimitMs] 時畫面上的速度、路徑已是好幾秒前的狀態，改顯示「資料延遲」。
+  int dataLagMs = 0;
+  static const dataLagLimitMs = 1500;
+  bool get dataLagging => isConnected && dataLagMs > dataLagLimitMs;
   double? get leadDistance {
     if (leadOne?['status'] != true) return null;
     if (lastRadarAt != null && DateTime.now().difference(lastRadarAt!).inMilliseconds > 2000) return null;

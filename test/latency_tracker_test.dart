@@ -45,4 +45,25 @@ void main() {
     t.onMessage(0, arrivalUs: offsetUs + 50000);
     expect(t.takeWindow()!.maxMs, closeTo(0, .01));  // 基準已重設
   });
+
+  test('lastExcessMs flags a growing backlog (old data arriving late)', () {
+    final t = LatencyTracker();
+    // 前 20 筆正常（延遲 10 ms），之後每筆多晚 100 ms：手機收到的是越來越舊的資料
+    for (var i = 0; i < 40; i++) {
+      final sentUs = i * 50000;
+      final extra = i < 20 ? 0 : (i - 19) * 100000;
+      t.onMessage(sentUs * 1000, arrivalUs: sentUs + offsetUs + 10000 + extra);
+    }
+    expect(t.lastExcessMs, 2000);  // 第 40 筆晚 20×100 ms
+  });
+
+  test('lastExcessMs uses the whole-session baseline, not just 60 s', () {
+    final t = LatencyTracker();
+    t.onMessage(0, arrivalUs: offsetUs + 10000);
+    for (var w = 0; w < 10; w++) {
+      t.takeWindow();                      // 經過 100 秒：統計基準已換過，連線基準只放寬 10 ms
+      t.onMessage((w + 1) * 1000000000, arrivalUs: (w + 1) * 1000000 + offsetUs + 3010000);
+    }
+    expect(t.lastExcessMs, greaterThan(2900)); // 一直晚 3 秒，仍判定為延遲
+  });
 }

@@ -106,6 +106,14 @@ class ConnectionManager {
   static final _controlRe = RegExp(r'^\s*\{\s*"type"\s*:\s*"(connectionReplaced|clockSync|disconnect)"');
   static final _monoRe = RegExp(r'"type":\s*"\w+",\s*"logMonoTime":\s*(\d+)');
   final LatencyTracker _latency = LatencyTracker();
+  // 合併處理：同一種 service 只留最新一筆，等事件佇列清空後一次套用（modelV2 最後套用，觸發重畫）。
+  // 手機一時處理不完時（解碼 JSON + 畫面），舊訊息不會排隊一筆一筆慢慢畫，畫面永遠是最新狀態。
+  static final _wholeMsgRe = RegExp(r'^\s*\{\s*"type":\s*"(\w+)",\s*"logMonoTime"');
+  final Map<String, String> _pendingMsgs = {};
+  bool _flushScheduled = false;
+  int _pendingEpoch = 0;
+  int _coalesced = 0;
+  bool _lagLogged = false;
   VideoCounters? _prevVideoLog;
   final Map<String, int> _rxCounts = {};
   Timer? _statsTimer;
@@ -277,6 +285,10 @@ class ConnectionManager {
     _prevVideo = null;
     _prevVideoLog = null;
     _latency.reset();
+    _uiState.dataLagMs = 0;
+    _lagLogged = false;
+    _pendingMsgs.clear();
+    _coalesced = 0;
     _stallCount = 0;
     var tick = 0;
     final epoch = _connectEpoch;
@@ -288,8 +300,10 @@ class ConnectionManager {
         final logNow = tick.isEven; // log 維持每 10 秒一筆
         if (logNow) {
           final keys = _rxCounts.keys.toList()..sort();
-          debugPrint('[opview] rx 10s: ${keys.isEmpty ? '(none)' : keys.map((k) => '$k=${_rxCounts[k]}').join(' ')}');
+          debugPrint('[opview] rx 10s: ${keys.isEmpty ? '(none)' : keys.map((k) => '$k=${_rxCounts[k]}').join(' ')}'
+              '${_coalesced > 0 ? ' | 合併略過 $_coalesced 筆舊訊息（手機處理不及）' : ''}');
           _rxCounts.clear();
+          _coalesced = 0;
         }
         final s = await _transport.statsSummary();
         if (epoch != _connectEpoch) return; // 期間已重連
@@ -320,7 +334,8 @@ class ConnectionManager {
       video = 'video jb ${f(jb)}ms + dec ${f(dec)}ms + rtt/2 ${f(half)}ms ≈ ${f(total)}ms';
     }
     if (v != null) _prevVideoLog = v;
-    debugPrint('[opview] latency 10s: ${data ?? 'data (none)'} | $video');
+    // lag now：最新一筆比「整段連線最順的一筆」晚多少（上面 data +X 只跟最近 60 秒比，長時間積壓會被低估）
+    debugPrint('[opview] latency 10s: ${data ?? 'data (none)'} | $video | lag now ${_latency.lastExcessMs}ms');
   }
 
   /// 影像卡住偵測：見檔案開頭 _stall* 常數說明
@@ -396,9 +411,53 @@ class ConnectionManager {
         final mono = int.tryParse(m.group(1)!);
         if (mono != null) _latency.onMessage(mono, arrivalUs: arrival);
       }
-      _adapter.apply(_uiState, chunk);
-      _switchStreamIfNeeded();
+      _uiState.dataLagMs = _latency.lastExcessMs;
+
+      final type = _wholeMsgRe.firstMatch(chunk)?.group(1);
+      if (type == null || chunk.contains('}{') || !chunk.trimRight().endsWith('}')) {
+        // 不是單筆完整訊息（理論上不會發生）：照舊直接交給 adapter 拼接
+        _flushPending();
+        _adapter.apply(_uiState, chunk);
+        _switchStreamIfNeeded();
+        return;
+      }
+      if (_pendingMsgs.containsKey(type)) _coalesced++;
+      _pendingMsgs[type] = chunk;
+      if (!_flushScheduled) {
+        _flushScheduled = true;
+        _pendingEpoch = _connectEpoch;
+        Timer.run(_flushPending);
+      }
     });
+  }
+
+  void _flushPending() {
+    _flushScheduled = false;
+    if (_pendingMsgs.isEmpty) return;
+    if (_pendingEpoch != _connectEpoch) {
+      _pendingMsgs.clear(); // 期間已斷線 / 重連，丟掉舊連線的資料
+      return;
+    }
+    final model = _pendingMsgs.remove('modelV2');
+    for (final raw in _pendingMsgs.values) {
+      _adapter.apply(_uiState, raw);
+    }
+    _pendingMsgs.clear();
+    if (model != null) _adapter.apply(_uiState, model);
+    _logLag();
+    _switchStreamIfNeeded();
+  }
+
+  /// 資料延遲超過上限 / 恢復時各記一行（畫面同時改顯示「資料延遲」）
+  void _logLag() {
+    final lag = _uiState.dataLagMs;
+    if (!_lagLogged && lag > UIState.dataLagLimitMs) {
+      _lagLogged = true;
+      debugPrint('[opview] data lag ${(lag / 1000).toStringAsFixed(1)}s — 資料晚到，畫面改顯示「資料延遲」');
+    } else if (_lagLogged && lag < UIState.dataLagLimitMs ~/ 2) {
+      _lagLogged = false;
+      debugPrint('[opview] data lag recovered (${lag}ms)');
+    }
   }
 
   /// switch camera based on experimental mode + speed hysteresis

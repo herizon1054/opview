@@ -108,7 +108,7 @@ class DashboardHud extends StatelessWidget {
 
 /// 狀態徽章文字與顏色（儀表介面與直向下方儀表區共用）
 (String, Color) dashboardStatus(UIState state, bool stale) {
-  final status = stale ? '資料中斷' : switch (state.status) {
+  final status = stale ? (state.dataLagging ? '資料延遲' : '資料中斷') : switch (state.status) {
     UIStatus.engaged => 'ENGAGED',
     UIStatus.override_ => 'OVERRIDE',
     UIStatus.disengaged => 'DISENGAGED',
@@ -166,7 +166,7 @@ class DashboardCard extends StatelessWidget {
                   style: TextStyle(fontSize: h * .10, color: Colors.white70)),
               ],
               SizedBox(height: h * .09),
-              Text(stale ? 'TELEMETRY STALE' : 'LIVE TELEMETRY',
+              Text(stale ? (state.dataLagging ? 'TELEMETRY DELAYED' : 'TELEMETRY STALE') : 'LIVE TELEMETRY',
                 style: TextStyle(fontSize: h * .065, color: color, letterSpacing: 1.3)),
               SizedBox(height: h * .07),
             ])),

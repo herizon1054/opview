@@ -122,7 +122,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
     super.didUpdateWidget(oldWidget);
     _checkAutoFullscreen();
   }
-  bool get _stale => !widget.uiState.isConnected ||
+  bool get _stale => !widget.uiState.isConnected || widget.uiState.dataLagging ||
       (widget.uiState.lastModelAt == null || DateTime.now()
         .difference(widget.uiState.lastModelAt!).inMilliseconds > 2000);
 
@@ -396,10 +396,9 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                               widget.uiState.leftBlinker, widget.uiState.rightBlinker,
                               widget.uiState.gearShifter),
                             builder: () => Stack(fit: StackFit.expand, children: [
-                              // 直向（方案 B）：儀表卡片移到影像下方的 PortraitPanel，影像上只留方向燈
+                              // 直向（方案 B）：儀表卡片與兩側方向燈都在影像下方的 PortraitPanel
                               if (widget.uiState.modernOverlay) ...[
-                                if (!portrait) DashboardHud(state: widget.uiState, stale: _stale)
-                                else if (!_stale) ..._portraitBlinkers(screenH),
+                                if (!portrait) DashboardHud(state: widget.uiState, stale: _stale),
                               ] else if (!_stale) HudRenderer(uiState: widget.uiState, scale: scale),
                               if (widget.settings?.layout == ViewerLayout.detailed)
                                 VehicleDetails(state: widget.uiState, stale: _stale),
@@ -514,7 +513,8 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                 widget.uiState.status, widget.uiState.experimentalMode,
                 widget.uiState.alertSize, widget.uiState.alertText1, widget.uiState.leadDistance != null,
                 widget.uiState.tdxNextSpeedDisplay, widget.uiState.tdxCongestion,
-                widget.uiState.tdxEventText, widget.uiState.gearShifter),
+                widget.uiState.tdxEventText, widget.uiState.gearShifter,
+                widget.uiState.leftBlinker, widget.uiState.rightBlinker),
               builder: () => PortraitPanel(state: widget.uiState, stale: _stale),
             ),
           ),
@@ -530,17 +530,6 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
     final cam = _lookupCamera();
     final c = widget.uiState.streamType == 'wideRoad' ? cam.ecam : cam.fcam;
     return c.width > 0 && c.height > 0 ? c.width / c.height : 1928 / 1208;
-  }
-
-  /// 直向：方向燈箭頭放在影像左下 / 右下角（儀表卡片在影像下方，兩側沒有空間）
-  List<Widget> _portraitBlinkers(double videoH) {
-    final size = (videoH * .2).clamp(28.0, 52.0);
-    return [
-      if (widget.uiState.leftBlinker)
-        Positioned(left: 8, bottom: 8, child: BlinkerArrow(left: true, size: size)),
-      if (widget.uiState.rightBlinker)
-        Positioned(right: 8, bottom: 8, child: BlinkerArrow(left: false, size: size)),
-    ];
   }
 
   // 直向操作列：畫面最下方一排按鈕（同側欄的按鈕與順序），左側小字顯示 LIVE / OFFLINE

@@ -23,7 +23,7 @@ class CompactHud extends StatelessWidget {
         Positioned(bottom: 3*u, left: 0, right: 0, child: Center(child: pill(
           '${state.leadDistance!.round()} m · ${state.leadHeadway?.toStringAsFixed(1) ?? "—"} s', 7))),
       if (stale) Positioned(bottom: 3*u, left: 0, right: 0,
-        child: Center(child: pill('資料中斷', 8))),
+        child: Center(child: pill(state.dataLagging ? '資料延遲' : '資料中斷', 8))),
       if (state.alertSize != 0)
         Positioned(bottom: 0, left: 0, right: 0, child: Container(
           color: state.alertStatus == 2 ? const Color(0xFFCC2233) : const Color(0xEE533C16),

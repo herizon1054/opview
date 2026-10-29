@@ -47,13 +47,20 @@ void main() {
     final card = tester.getRect(find.textContaining('TELEMETRY').first);
     expect(card.top, greaterThan(videoH));
     expect(card.center.dx, closeTo(195, 30));
-    expect(tester.getRect(find.byType(DashboardCard)).width, greaterThan(390 * .85));
-    // 方向燈在影像左下 / 右下角
+    final cardRect = tester.getRect(find.byType(DashboardCard));
+    expect(cardRect.width, greaterThan(390 * .6));
+    // 方向燈在儀表卡片左右兩側（與橫向相同），不在影像上
     final arrows = find.byType(BlinkerArrow);
     expect(arrows, findsNWidgets(2));
-    for (final e in arrows.evaluate()) {
-      final r = tester.getRect(find.byWidget(e.widget));
-      expect(r.bottom, lessThanOrEqualTo(videoH + 1));
+    final rects = arrows.evaluate().map((e) => tester.getRect(find.byWidget(e.widget))).toList()
+      ..sort((a, b) => a.left.compareTo(b.left));
+    expect(rects[0].right, lessThanOrEqualTo(cardRect.left + 1));
+    expect(rects[1].left, greaterThanOrEqualTo(cardRect.right - 1));
+    for (final r in rects) {
+      expect(r.top, greaterThan(videoH));
+      expect(r.center.dy, closeTo(cardRect.center.dy, 2));
+      expect(r.left, greaterThanOrEqualTo(0));
+      expect(r.right, lessThanOrEqualTo(390));
     }
 
     // 全螢幕：操作列收起、右上角出現叫回按鈕

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../ui_state.dart';
 
 // Uses only fields from carState already present on the existing stream.
+// 方向燈、盲點不在這裡列文字：方向燈 = 儀表卡片兩側箭頭，盲點 = 影像左右邊緣黃色光暈（直向 / 橫向相同）。
 class VehicleDetails extends StatelessWidget {
   final UIState state;
   final bool stale;
@@ -14,9 +15,7 @@ class VehicleDetails extends StatelessWidget {
       decoration: BoxDecoration(color: const Color(0xD010191D), borderRadius: BorderRadius.circular(14)),
       child: Text(
         '方向盤  ${stale ? "—" : state.steeringAngleDeg?.toStringAsFixed(1) ?? "—"}°\n'
-        '加速度  ${stale ? "—" : state.aEgo?.toStringAsFixed(2) ?? "—"} m/s²\n'
-        '左方向燈  ${!stale && state.leftBlinker ? "亮" : "—"}    右  ${!stale && state.rightBlinker ? "亮" : "—"}\n'
-        '左盲點  ${!stale && state.leftBlindspot ? "偵測" : "—"}    右  ${!stale && state.rightBlindspot ? "偵測" : "—"}',
+        '加速度  ${stale ? "—" : state.aEgo?.toStringAsFixed(2) ?? "—"} m/s²',
         style: const TextStyle(color: Colors.white70, fontSize: 11, height: 1.5)),
     ),
   ));

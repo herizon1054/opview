@@ -20,6 +20,14 @@ class LatencyTracker {
   final List<int> _recentMinsUs = [];    // 前幾個視窗的最小差值
   int? _lastArrivalUs;
   int _maxGapUs = 0;
+  int? _sessionMinUs;    // 整段連線的最小差值（判斷「資料延遲」用，不像統計基準只看 60 秒）
+  int _lastExcessUs = 0; // 最新一筆比基準多晚到
+  // 兩台單調時鐘頻率誤差約 ±100 ppm：每個 10 秒視窗把連線基準放寬 1 ms，長時間連線也不會誤判延遲
+  static const _sessionRelaxUsPerWindow = 1000;
+
+  /// 最新一筆訊息的額外延遲（ms）。畫面用來判斷「資料延遲」：
+  /// 資料照常進來、但內容是好幾秒前的狀態（comma 送出佇列或手機處理積壓）。
+  int get lastExcessMs => _lastExcessUs ~/ 1000;
 
   LatencyTracker({Stopwatch? clock}) : _clock = clock ?? (Stopwatch()..start());
 
@@ -30,12 +38,18 @@ class LatencyTracker {
     _recentMinsUs.clear();
     _lastArrivalUs = null;
     _maxGapUs = 0;
+    _sessionMinUs = null;
+    _lastExcessUs = 0;
   }
 
   /// [commaMonoNs]：訊息的 logMonoTime；[arrivalUs]：手機收到時間（預設現在，測試可指定）
   void onMessage(int commaMonoNs, {int? arrivalUs}) {
     final t = arrivalUs ?? nowUs;
-    _deltasUs.add(t - commaMonoNs ~/ 1000);
+    final delta = t - commaMonoNs ~/ 1000;
+    _deltasUs.add(delta);
+    final base = _sessionMinUs;
+    if (base == null || delta < base) _sessionMinUs = delta;
+    _lastExcessUs = delta - _sessionMinUs!;
     final last = _lastArrivalUs;
     if (last != null && t - last > _maxGapUs) _maxGapUs = t - last;
     _lastArrivalUs = t;
@@ -66,6 +80,7 @@ class LatencyTracker {
     if (_recentMinsUs.length > baselineWindows - 1) _recentMinsUs.removeAt(0);
     _deltasUs.clear();
     _maxGapUs = 0;
+    if (_sessionMinUs != null) _sessionMinUs = _sessionMinUs! + _sessionRelaxUsPerWindow;
     return result;
   }
 }

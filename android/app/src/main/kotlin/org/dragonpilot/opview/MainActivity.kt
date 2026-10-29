@@ -130,6 +130,13 @@ class MainActivity: FlutterActivity() {
         }
     }
 
+    private fun hasNotificationAccess(): Boolean {
+        val enabled = android.provider.Settings.Secure.getString(
+            contentResolver, "enabled_notification_listeners") ?: ""
+        return enabled.split(":").any {
+            android.content.ComponentName.unflattenFromString(it)?.packageName == packageName }
+    }
+
     private fun exitReasonName(r: Int): String = when (r) {
         1 -> "EXIT_SELF"; 2 -> "SIGNALED"; 3 -> "LOW_MEMORY"; 4 -> "CRASH(Java)"; 5 -> "CRASH_NATIVE"
         6 -> "ANR"; 7 -> "INITIALIZATION_FAILURE"; 8 -> "PERMISSION_CHANGE"; 9 -> "EXCESSIVE_RESOURCE_USAGE"
@@ -311,11 +318,25 @@ class MainActivity: FlutterActivity() {
                     }
                 }
                 // 是否已授權「通知存取權」（讀取 LINE 通知）
-                "notificationAccess" -> {
-                    val enabled = android.provider.Settings.Secure.getString(
-                        contentResolver, "enabled_notification_listeners") ?: ""
-                    result.success(enabled.split(":").any {
-                        android.content.ComponentName.unflattenFromString(it)?.packageName == packageName })
+                "notificationAccess" -> result.success(hasNotificationAccess())
+                // LINE 通知診斷：授權、服務綁定、LINE 是否安裝、收到 / 略過的數量（不含內容）
+                "lineDiag" -> {
+                    val m = HashMap<String, Any?>(OpviewNotificationListener.diag())
+                    m["access"] = hasNotificationAccess()
+                    m["lineInstalled"] = try {
+                        packageManager.getPackageInfo(OpviewNotificationListener.LINE_PACKAGE, 0); true
+                    } catch (e: Exception) { false }
+                    result.success(m)
+                }
+                // 已授權但系統沒有綁定服務（例如被省電機制停掉）：要求系統重新綁定
+                "lineRebind" -> {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && hasNotificationAccess()) {
+                        try {
+                            android.service.notification.NotificationListenerService.requestRebind(
+                                android.content.ComponentName(this, OpviewNotificationListener::class.java))
+                            result.success(true)
+                        } catch (e: Exception) { result.success(false) }
+                    } else result.success(false)
                 }
                 // 開啟系統「通知存取權」設定頁
                 "openNotificationAccess" -> {

@@ -57,6 +57,8 @@
             android:value="2" />
     </application>
     <queries>
+        <!-- LINE 通知診斷：確認 LINE 是否安裝（Android 11+ 套件可見性） -->
+        <package android:name="jp.naver.line.android" />
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>

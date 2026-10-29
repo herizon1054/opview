@@ -92,6 +92,10 @@ class ViewerSettingsDialog extends StatelessWidget {
             OutlinedButton.icon(icon: const Icon(Icons.share, size: 18), label: const Text('分享 log'),
               onPressed: () async {
                 _logResult.value = '匯出中…';
+                // 開啟 LINE 通知時，分享前補一行目前的 LINE 診斷（只有數量與狀態，不含訊息內容）
+                if (LineNotifications.instance.enabled) {
+                  await LineNotifications.instance.logDiagnostics(force: true);
+                }
                 _logResult.value = await AppLog.instance.share();
               }),
             TextButton(child: const Text('清除 log'),

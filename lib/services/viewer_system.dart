@@ -56,3 +56,13 @@ Future<bool> enterPip() async {
   } on PlatformException { pipSupported.value = false; return false; }
   on MissingPluginException { pipSupported.value = false; return false; }
 }
+
+/// 點「全螢幕」時鎖定橫向；退出全螢幕 / 離開 opview 畫面時恢復（直向 + 兩個橫向，同 main.dart）
+Future<void> setLandscapeOnly(bool on) async {
+  try {
+    await SystemChrome.setPreferredOrientations(on
+        ? const [DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]
+        : const [DeviceOrientation.portraitUp, DeviceOrientation.landscapeLeft, DeviceOrientation.landscapeRight]);
+  } on PlatformException { /* best-effort */ }
+  on MissingPluginException { /* best-effort */ }
+}

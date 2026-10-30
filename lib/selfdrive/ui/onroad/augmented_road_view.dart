@@ -108,7 +108,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
       return;
     }
     _autoFsArmed = false;
-    _enterFullscreen();
+    _enterFullscreen(landscape: true);
   }
 
   void _cancelAutoFullscreen() {
@@ -141,6 +141,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
   void dispose() {
     _freshnessTimer?.cancel();
     _autoFsTimer?.cancel();
+    _releaseLandscape(); // 離開 opview 畫面（回主畫面）時恢復可直向
     super.dispose();
   }
 
@@ -206,10 +207,30 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
       )));
   }
 
-  void _enterFullscreen() {
+  // 點「全螢幕」或自動全螢幕（顯示設定）：收起操作列並鎖定橫向（直向時會轉成橫向）；
+  // 退出全螢幕 / 離開畫面時解除鎖定。
+  bool _forcedLandscape = false;
+
+  void _enterFullscreen({bool landscape = false}) {
     setState(() { _showRail = false; _showDetails = false; });
     // 系統列可能被手勢叫出後未收回，進全螢幕時重新套用 immersive
     system.reapplyImmersive();
+    if (landscape && !_forcedLandscape) {
+      _forcedLandscape = true;
+      system.setLandscapeOnly(true);
+    }
+  }
+
+  void _exitFullscreen() {
+    _cancelAutoFullscreen();
+    setState(() => _showRail = true);
+    _releaseLandscape();
+  }
+
+  void _releaseLandscape() {
+    if (!_forcedLandscape) return;
+    _forcedLandscape = false;
+    system.setLandscapeOnly(false);
   }
 
   List<_RailItem> _railItems() => [
@@ -240,7 +261,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
             const SnackBar(content: Text('Android 未允許進入子母畫面')));
         }
       }),
-    _RailItem(Icons.fullscreen, '全螢幕', _enterFullscreen),
+    _RailItem(Icons.fullscreen, '全螢幕', () => _enterFullscreen(landscape: true)),
     if (widget.onExit != null)
       _RailItem(Icons.logout, '退出', widget.onExit!),
   ];
@@ -280,7 +301,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
         child: IconButton(
           tooltip: '顯示操作列', iconSize: 26,
           icon: const Icon(Icons.fullscreen_exit, color: dashboardTeal),
-          onPressed: () { _cancelAutoFullscreen(); setState(() => _showRail = true); })))));
+          onPressed: _exitFullscreen)))));
 
   // TDX 事件跑馬燈：畫面上方。儀表介面在左上 "opview" 標題右側；
   // 原版介面放在 header（目前車速 / MAX 框）下方，避免蓋到車速

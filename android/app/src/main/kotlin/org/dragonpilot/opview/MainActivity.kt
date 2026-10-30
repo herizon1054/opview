@@ -74,6 +74,7 @@ class MainActivity: FlutterActivity() {
     // Android 9 以下：分享最後 100 KB 文字
     private fun shareLog(f: File): String {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            deleteOldSharedLogs()
             val values = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, f.name)
                 put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
@@ -100,6 +101,22 @@ class MainActivity: FlutterActivity() {
         }
         startActivity(Intent.createChooser(send, "分享 opview log"))
         return "text"
+    }
+
+    /** 「下載/opview/」裡 opview 自己存的舊 log 只留 3 天內的（App 刪自己建立的 MediaStore 檔不需權限） */
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun deleteOldSharedLogs() {
+        try {
+            val cutoffSec = System.currentTimeMillis() / 1000 - 3L * 24 * 3600
+            contentResolver.delete(
+                MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? AND " +
+                    "${MediaStore.MediaColumns.DISPLAY_NAME} LIKE ? AND " +
+                    "${MediaStore.MediaColumns.DATE_ADDED} < ?",
+                arrayOf(Environment.DIRECTORY_DOWNLOADS + "/opview%", "opview-log-%", cutoffSec.toString()))
+        } catch (_: Exception) {
+            // 其他 App 建立的同名檔或系統不允許：略過
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -329,14 +346,26 @@ class MainActivity: FlutterActivity() {
                     result.success(m)
                 }
                 // 已授權但系統沒有綁定服務（例如被省電機制停掉）：要求系統重新綁定
+                // 小米 HyperOS：從最近工作上滑清除（SwipeUpClean）後，系統不再綁定通知服務，
+                // 單純 requestRebind 無效（log 實測）。先把服務元件停用再啟用，讓系統重新掃描並綁定，再 requestRebind。
                 "lineRebind" -> {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && hasNotificationAccess()) {
+                    if (!hasNotificationAccess()) { result.success("未授權"); return@setMethodCallHandler }
+                    val cn = android.content.ComponentName(this, OpviewNotificationListener::class.java)
+                    val steps = ArrayList<String>()
+                    try {
+                        packageManager.setComponentEnabledSetting(cn,
+                            PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP)
+                        packageManager.setComponentEnabledSetting(cn,
+                            PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP)
+                        steps.add("元件重新啟用")
+                    } catch (e: Exception) { steps.add("元件重新啟用失敗：${e.message}") }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                         try {
-                            android.service.notification.NotificationListenerService.requestRebind(
-                                android.content.ComponentName(this, OpviewNotificationListener::class.java))
-                            result.success(true)
-                        } catch (e: Exception) { result.success(false) }
-                    } else result.success(false)
+                            android.service.notification.NotificationListenerService.requestRebind(cn)
+                            steps.add("requestRebind")
+                        } catch (e: Exception) { steps.add("requestRebind 失敗：${e.message}") }
+                    }
+                    result.success(steps.joinToString(" + "))
                 }
                 // 開啟系統「通知存取權」設定頁
                 "openNotificationAccess" -> {

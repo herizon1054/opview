@@ -3,6 +3,9 @@
 // - 攔截所有 debugPrint（連線狀態列、mDNS、網段掃描、WebRTC 等都經由 debugPrint 輸出）
 //   以及 Flutter / 平台未捕捉例外，加上時間戳寫入 App 私有目錄的 opview.log
 // - 單檔超過 1 MB 輪替成 opview.log.1（最多保留約 2 MB）
+// - 只保留最近 3 天：啟動時、每 6 小時、匯出前刪掉 3 天前的行（依每行開頭的時間戳；
+//   沒有時間戳的行，例如 codec / app / 例外堆疊，跟著前一個有時間戳的行一起保留或刪除）
+//   「下載/opview/」裡分享過的舊檔也只留 3 天內的（MainActivity.shareLog）
 // - 分享：合併兩個檔 → Android 存到「下載/opview/」並開啟系統分享選單（LINE、Messenger、Email…）
 //   Android 9 以下沒有 MediaStore Downloads，改分享最後 100 KB 文字
 //
@@ -15,6 +18,39 @@ import 'package:flutter/services.dart';
 
 const _channel = MethodChannel('org.dragonpilot.opview/log');
 const _maxFileBytes = 1024 * 1024;
+const logRetention = Duration(days: 3);
+
+final _lineTsRe = RegExp(r'^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})');
+final _startTsRe = RegExp(r'opview start (\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})');
+
+DateTime? _lineTime(String line) {
+  final m = _lineTsRe.firstMatch(line) ?? _startTsRe.firstMatch(line);
+  if (m == null) return null;
+  int g(int i) => int.parse(m.group(i)!);
+  return DateTime(g(1), g(2), g(3), g(4), g(5), g(6));
+}
+
+/// 刪掉 [cutoff] 之前的行；沒有時間戳的行跟著前一個有時間戳的行走
+/// （檔案開頭沒有時間戳的行，跟著第一個有時間戳的行走）。回傳保留的行。
+@visibleForTesting
+List<String> pruneLogLines(List<String> lines, DateTime cutoff) {
+  final out = <String>[];
+  final leading = <String>[];
+  bool? keep;
+  for (final l in lines) {
+    final t = _lineTime(l);
+    if (t != null) {
+      final k = !t.isBefore(cutoff);
+      if (keep == null && k) out.addAll(leading);
+      keep = k;
+    } else if (keep == null) {
+      leading.add(l);
+      continue;
+    }
+    if (keep) out.add(l);
+  }
+  return out;
+}
 
 class AppLog {
   AppLog._();
@@ -24,6 +60,7 @@ class AppLog {
   final List<String> _pending = []; // init 完成前先暫存
   int _writesSinceCheck = 0;
   DebugPrintCallback? _origDebugPrint;
+  Timer? _pruneTimer;
 
   /// 在 main() 最前面呼叫：攔截 debugPrint 與未捕捉例外
   void install() {
@@ -50,6 +87,8 @@ class AppLog {
       final dir = await _channel.invokeMethod<String>('dir');
       if (dir == null) return;
       _file = File('$dir/opview.log');
+      _pruneOld();
+      _pruneTimer ??= Timer.periodic(const Duration(hours: 6), (_) => _pruneOld());
       final info = await _channel.invokeMapMethod<String, dynamic>('info') ?? const {};
       _writeRaw('\n========== opview start ${_ts()} ==========');
       _writeRaw('app ${info['version'] ?? '?'} (${info['build'] ?? '?'}) · '
@@ -117,10 +156,32 @@ class AppLog {
     }
   }
 
+  /// 只保留最近 3 天（見檔頭說明）
+  void _pruneOld() {
+    final f = _file;
+    if (f == null) return;
+    final cutoff = DateTime.now().subtract(logRetention);
+    for (final p in ['${f.path}.1', f.path]) {
+      final x = File(p);
+      try {
+        if (!x.existsSync()) continue;
+        if (x.lastModifiedSync().isBefore(cutoff)) { x.deleteSync(); continue; } // 整檔都是 3 天前
+        final lines = x.readAsLinesSync();
+        final kept = pruneLogLines(lines, cutoff);
+        if (kept.length != lines.length) {
+          x.writeAsStringSync(kept.isEmpty ? '' : '${kept.join('\n')}\n', flush: true);
+        }
+      } catch (_) {
+        // best-effort
+      }
+    }
+  }
+
   /// 合併 opview.log.1 + opview.log 成分享用檔案，回傳路徑
   Future<String?> export() async {
     final f = _file;
     if (f == null) return null;
+    _pruneOld();
     final out = File('${f.parent.path}/opview-log-${_stamp()}.txt');
     final sink = out.openWrite();
     for (final p in ['${f.path}.1', f.path]) {

@@ -34,7 +34,7 @@ class LineNotifications extends ChangeNotifier {
   Timer? _expireTimer;
   Timer? _diagTimer;
   String? _lastDiag;
-  bool _rebindTried = false;
+  int _rebindCount = 0; // 本次開啟後已嘗試重新綁定的次數（最多 3 次）
   bool _enabled = false;
   DateTime Function() now = DateTime.now; // 測試可替換
 
@@ -53,7 +53,7 @@ class LineNotifications extends ChangeNotifier {
       } on MissingPluginException {
         // 非 Android（測試）
       }
-      _rebindTried = false;
+      _rebindCount = 0;
       _lastDiag = null;
       // 剛開啟時服務可能還在綁定，3 秒後先查一次，之後每 60 秒
       _diagTimer = Timer(const Duration(seconds: 3), () {
@@ -96,15 +96,21 @@ class LineNotifications extends ChangeNotifier {
         debugPrint('[opview] LINE 診斷：尚未授權「通知存取權」→ 顯示設定開啟「顯示 LINE 通知」會引導設定');
       } else if (!installed) {
         debugPrint('[opview] LINE 診斷：這支手機找不到 LINE（jp.naver.line.android）');
-      } else if (!connected && !_rebindTried) {
-        _rebindTried = true;
-        bool ok = false;
-        try { ok = await _system.invokeMethod<bool>('lineRebind') ?? false; }
-        on PlatformException { ok = false; }
-        debugPrint('[opview] LINE 診斷：已授權但系統沒有綁定通知服務（可能被省電機制停止）→ 要求重新綁定：${ok ? '已送出' : '失敗'}');
+      } else if (!connected && _rebindCount >= 3) {
+        debugPrint('[opview] LINE 診斷：重新綁定 3 次仍未連線 → 請到「通知存取權」把 opview 關閉再開啟；'
+            '小米請在最近工作把 opview 鎖定（下拉鎖頭）、開啟自動啟動、省電設為無限制，避免上滑清除後服務被停');
       } else if (connected && (d['anyPosted'] as int? ?? 0) > 0 && (d['linePosted'] as int? ?? 0) == 0) {
         debugPrint('[opview] LINE 診斷：服務有收到其他 App 的通知，但沒有 LINE 的 → 檢查 LINE 的通知是否開啟（LINE 設定 / 系統通知設定 / 聊天室靜音）');
       }
+    }
+    // 已授權但服務沒綁定（小米上滑清除後常見）：重新綁定，最多 3 次，5 秒後再查一次確認結果
+    if (access && installed && !connected && _rebindCount < 3 && _enabled) {
+      _rebindCount++;
+      String r;
+      try { r = await _system.invokeMethod<String>('lineRebind') ?? '無回應'; }
+      on PlatformException catch (e) { r = '失敗：${e.message}'; }
+      debugPrint('[opview] LINE 診斷：通知服務未連線 → 第 $_rebindCount 次重新綁定（$r）');
+      Timer(const Duration(seconds: 5), () { if (_enabled) logDiagnostics(force: true); });
     }
   }
 

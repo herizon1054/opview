@@ -52,7 +52,10 @@ void main() {
     expect(speed.top, greaterThan(card.bottom));
     expect(event.top, greaterThan(speed.bottom));
     expect(line.top, greaterThan(event.bottom));
-    expect(line.height, greaterThanOrEqualTo(14 * 1.3 * 2 - 1)); // 至少兩行
+    // v20：字級 14 × 1.3；空間足夠時這則（約 3 行）完整顯示，不截斷
+    expect(line.height, greaterThanOrEqualTo(14 * 1.3 * 1.3 * 2 - 1));
+    final t = tester.widget<Text>(find.textContaining('我到停車場了'));
+    expect(t.style!.fontSize, closeTo(14 * 1.3, .01));
     LineNotifications.instance.clear(); // 取消 30 秒到期計時器
     await tester.pumpWidget(const SizedBox.shrink());
     settings.dispose();

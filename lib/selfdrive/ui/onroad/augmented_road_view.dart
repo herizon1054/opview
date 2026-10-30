@@ -317,8 +317,9 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
       top: modern ? 12 : 300 * scale + 6,
       left: 16, right: 16,
       child: IgnorePointer(child: RepaintBoundary(
-        child: TdxMarquee(text: widget.uiState.tdxEventText,
-          maxWidth: screenW * .6 < 420 ? screenW * .6 : 420))));
+        // v20：字級 ×1.3（17.25 → 約 22.4），最寬放寬到畫面 70%（上限 560dp）
+        child: TdxMarquee(text: widget.uiState.tdxEventText, fontSize: 17.25 * 1.3,
+          maxWidth: screenW * .7 < 560 ? screenW * .7 : 560))));
   }
 
   Widget _details() => Positioned(top: 50, bottom: 20, right: 16,

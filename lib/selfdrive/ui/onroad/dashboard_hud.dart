@@ -146,8 +146,9 @@ class DashboardCard extends StatelessWidget {
           Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
             Text('MAX', style: TextStyle(color: color, fontSize: h * .10,
                 fontWeight: FontWeight.w700, letterSpacing: 2)),
-            Text(!stale && state.isCruiseSet ? '${state.setSpeed.round()}' : '—',
-                style: TextStyle(fontSize: h * .26, fontWeight: FontWeight.w700)),
+            // 直向卡片高度提高、寬度不變時，三位數可能超出欄寬 → 等比縮小而不是換行
+            FittedBox(fit: BoxFit.scaleDown, child: Text(!stale && state.isCruiseSet ? '${state.setSpeed.round()}' : '—',
+                style: TextStyle(fontSize: h * .26, fontWeight: FontWeight.w700))),
           ])),
           Expanded(flex: 3, child: CustomPaint(
             painter: _GaugePainter(stale ? 0 : state.displaySpeed,
@@ -183,13 +184,14 @@ class DashboardCard extends StatelessWidget {
     final dist = !stale ? state.leadDistance : null;
     final headway = !stale ? state.leadHeadway : null;
     if (tdxSpeed == null) {
-      return Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+      return FittedBox(fit: BoxFit.scaleDown, child: Column(mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min, children: [
         Icon(Icons.directions_car_outlined, color: color, size: h * .18),
         Text(dist != null ? '${dist.round()} m' : '—',
             style: TextStyle(fontSize: h * .12, fontWeight: FontWeight.w600)),
         Text(headway != null ? '${headway.toStringAsFixed(1)} s' : '—',
             style: TextStyle(fontSize: h * .10, color: Colors.white60)),
-      ]);
+      ]));
     }
     final tdxColor = tdxCongestionColor(state.tdxCongestion);
     final lead = dist == null ? null

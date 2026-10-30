@@ -2,7 +2,7 @@ name: APK Size
 
 on:
   pull_request:
-    branches: [main]
+    branches: [20261027]
 
 jobs:
   build-base:

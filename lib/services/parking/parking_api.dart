@@ -625,7 +625,6 @@ class ParkingApi {
     final cache = await cached(city);
     if (cache == null)
       throw ParkingApiError('尚無${parkingCities[city] ?? city}位置資料，請查看自動更新狀態');
-    await gate.beginClick();
     final sorted =
         cache.lots
             .where((e) => parkingDistance(lat, lon, e.lat, e.lon) <= radius)
@@ -642,8 +641,6 @@ class ParkingApi {
       ...sorted.where((e) => !e.onStreet).take(20),
       ...sorted.where((e) => e.onStreet).take(20),
     ];
-    if (candidates.isEmpty)
-      return ParkingResult([], '目前範圍沒有已快取的停車場或路段', clock());
     final needed = [false, true]
         .where(
           (on) =>
@@ -652,6 +649,17 @@ class ParkingApi {
         )
         .toList();
     final localGroup = candidates.where((e) => e.isLocal).toList();
+    // A static download can fill the shared 5/minute window (e.g. Kaohsiung:
+    // 2 off-street + 3 on-street pages). Check before starting the 30 s click
+    // cooldown so live groups are not silently dropped by local throttling.
+    final liveRequests = needed.length + (localGroup.isEmpty ? 0 : 1);
+    final cooldown = await gate.remaining();
+    final wait = await gate.remaining(dataSlots: liveRequests);
+    if (wait > cooldown)
+      throw ParkingGateError('本機每分鐘 5 筆節流（位置資料剛更新），請等待 $wait 秒再查詢');
+    await gate.beginClick();
+    if (candidates.isEmpty)
+      return ParkingResult([], '目前範圍沒有已快取的停車場或路段', clock());
     if (needed.isEmpty && localGroup.isEmpty)
       return ParkingResult(candidates, '此縣市的這類場地尚無動態空位資料', clock());
     // Auth failures must not suppress an independent local feed.

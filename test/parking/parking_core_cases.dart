@@ -206,6 +206,27 @@ final parkingCoreCases = <String, Future<void> Function()>{
     check(result.lots.isNotEmpty, 'query immediately after static update');
     check(await f.gate.remaining() == 30, 'live query still has cooldown');
   },
+  'large static update fills gate; query waits without wasting cooldown':
+      () async {
+        // Kaohsiung: 2 off-street + 3 on-street static pages = 5 requests.
+        final f = Fixture();
+        await f.download();
+        for (var i = 0; i < 3; i++)
+          check(await f.gate.reserveData() == 0, 'fill slot $i');
+        check(await f.gate.remaining(dataSlots: 2) > 0, 'button countdown');
+        final before = f.requests.length;
+        await fails(f.query(), '節流');
+        check(f.requests.length == before, 'no HTTP while throttled');
+        check(await f.gate.remaining() == 0, 'no click cooldown consumed');
+        f.advance(61);
+        check(await f.gate.remaining(dataSlots: 2) == 0, 'window cleared');
+        final r = await f.query();
+        check(
+          r.lots.any((e) => e.onStreet && e.availability?.cars == 7) &&
+              r.lots.any((e) => !e.onStreet && e.availability?.cars == 3),
+          'both roadside and off-street vacancies on first allowed query',
+        );
+      },
   'diagnostics sample all supported endpoints without modifying caches':
       () async {
         final f = Fixture();

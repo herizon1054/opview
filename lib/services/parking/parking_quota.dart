@@ -53,13 +53,33 @@ class ParkingRequestGate {
   int _remaining(int until) => ((until - clock().millisecondsSinceEpoch) / 1000)
       .ceil()
       .clamp(0, 2147483647);
-  Future<int> remaining() => _serial(() async {
-    final s = await _load();
-    return _remaining(
-      (s['clickUntil'] as int) > (s['blockedUntil'] as int)
-          ? s['clickUntil'] as int
-          : s['blockedUntil'] as int,
-    );
+  /// Milliseconds until [slots] requests fit in the rolling 5/minute window.
+  /// Read-only: never reserves a slot.
+  int _dataWait(Map<String, dynamic> s, int slots, int now) {
+    if (slots <= 0) return 0;
+    if (slots > 5) slots = 5;
+    final times =
+        (s['requests'] as List)
+            .cast<int>()
+            .where((t) => now - t < 60000)
+            .toList()
+          ..sort();
+    final excess = times.length + slots - 5;
+    if (excess <= 0) return 0;
+    // The oldest `excess` requests must leave the window first.
+    return (times[excess - 1] + 60001 - now).clamp(1, 86400000);
+  }
+
+  /// Seconds before a manual query may start. [dataSlots] also waits until
+  /// that many live requests fit in the shared 5/minute window, so a query
+  /// right after a large static download is not wasted on local throttling.
+  Future<int> remaining({int dataSlots = 0}) => _serial(() async {
+    final s = await _load(), now = clock().millisecondsSinceEpoch;
+    final until = (s['clickUntil'] as int) > (s['blockedUntil'] as int)
+        ? s['clickUntil'] as int
+        : s['blockedUntil'] as int;
+    final data = _dataWait(s, dataSlots, now);
+    return _remaining(until > now + data ? until : now + data);
   });
   Future<void> beginClick() => _serial(() async {
     final s = await _load(), now = clock().millisecondsSinceEpoch;

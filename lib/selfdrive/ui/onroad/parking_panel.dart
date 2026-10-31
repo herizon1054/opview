@@ -73,7 +73,8 @@ class _ParkingPanelState extends State<ParkingPanel>
     if (!mounted || !_foreground || _clockBusy) return;
     _clockBusy = true;
     try {
-      final seconds = await parkingGate.remaining();
+      // One query uses at most 2 live requests (off/on-street, or TDX + local).
+      final seconds = await parkingGate.remaining(dataSlots: 2);
       if (mounted) setState(() => _remaining = seconds);
     } catch (_) {
       if (mounted) setState(() => _message = '無法讀取查詢冷卻紀錄');

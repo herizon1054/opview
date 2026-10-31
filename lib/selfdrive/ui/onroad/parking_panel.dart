@@ -221,7 +221,7 @@ class _ParkingPanelState extends State<ParkingPanel>
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             SizedBox(
-              height: 40,
+              height: 48,
               child: Row(
                 children: [
                   Expanded(
@@ -235,7 +235,13 @@ class _ParkingPanelState extends State<ParkingPanel>
                               _remaining > 0
                           ? null
                           : _query,
-                      icon: const Icon(Icons.local_parking, size: 18),
+                      icon: const Icon(Icons.local_parking, size: 26),
+                      style: FilledButton.styleFrom(
+                        textStyle: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                       label: Text(
                         _startup.busy
                             ? '更新位置資料…'
@@ -272,7 +278,7 @@ class _ParkingPanelState extends State<ParkingPanel>
               Text(
                 '$mode · ${parkingCities[_city] ?? '手機定位'} · ${_result == null ? _config.radius : _radius} m · 僅所選縣市',
                 maxLines: 1,
-                style: const TextStyle(fontSize: 11, color: Colors.white54),
+                style: const TextStyle(fontSize: 13, color: Colors.white54),
               ),
             Text(
               !_config.enabled
@@ -284,7 +290,7 @@ class _ParkingPanelState extends State<ParkingPanel>
                   : _message,
               maxLines: compact ? 1 : 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 11, color: Colors.white70),
+              style: const TextStyle(fontSize: 13, color: Colors.white70),
             ),
             if (!compact)
               Expanded(
@@ -292,7 +298,7 @@ class _ParkingPanelState extends State<ParkingPanel>
                     ? Center(
                         child: Text(
                           _result == null ? '按上方按鈕查詢周遭車位' : '此範圍內無可顯示的停車資料',
-                          style: TextStyle(fontSize: 12, color: Colors.white38),
+                          style: TextStyle(fontSize: 16, color: Colors.white38),
                         ),
                       )
                     : ListView.builder(
@@ -307,7 +313,10 @@ class _ParkingPanelState extends State<ParkingPanel>
                             lot.lat,
                             lot.lon,
                           ).round();
-                          final label = a?.label(now) ?? '無空位資料';
+                          final label = (a?.label(now) ?? '無空位資料').replaceAll(
+                            '無空位資料',
+                            '無空位',
+                          );
                           final t = (a?.sourceTime ?? a?.receivedAt)?.toLocal();
                           final time = t == null
                               ? '時間不明'
@@ -326,16 +335,16 @@ class _ParkingPanelState extends State<ParkingPanel>
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(
-                                          fontSize: 13,
+                                          fontSize: 16,
                                           fontWeight: FontWeight.w600,
                                         ),
                                       ),
                                       Text(
-                                        '${lot.sourceLabel} · $distance m · ${a?.sourceTime == null && a?.receivedAt != null ? '取得' : ''}$time · ${lot.address}',
+                                        '$distance m · ${a?.sourceTime == null && a?.receivedAt != null ? '取得' : ''}$time · ${lot.address}',
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(
-                                          fontSize: 10,
+                                          fontSize: 13,
                                           color: Colors.white54,
                                         ),
                                       ),
@@ -346,7 +355,7 @@ class _ParkingPanelState extends State<ParkingPanel>
                                 Text(
                                   label,
                                   style: TextStyle(
-                                    fontSize: 12,
+                                    fontSize: 16,
                                     color:
                                         a != null &&
                                             a.fresh(now) &&
@@ -357,14 +366,14 @@ class _ParkingPanelState extends State<ParkingPanel>
                                   ),
                                 ),
                                 SizedBox(
-                                  width: 32,
+                                  width: 48,
                                   child: IconButton(
                                     padding: EdgeInsets.zero,
                                     tooltip: '導航 ${lot.lat}, ${lot.lon}',
                                     onPressed: () => _navigate(lot),
                                     icon: const Icon(
                                       Icons.directions,
-                                      size: 18,
+                                      size: 28,
                                     ),
                                   ),
                                 ),

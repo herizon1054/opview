@@ -111,6 +111,8 @@ void main() {
             theme: ThemeData(fontFamily: 'Roboto'),
             home: AugmentedRoadView(
               uiState: state,
+              initialRailVisible: false,
+              showControls: false,
               videoRenderer: null, // black background in tests
             ),
           ),
@@ -121,6 +123,9 @@ void main() {
           find.byType(AugmentedRoadView),
           matchesGoldenFile('goldens/${screenName}_$scenarioName.png'),
         );
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        state.dispose();
 
         // Re-throw non-overflow errors
         for (final e in errors) {

@@ -16,7 +16,10 @@ UIState createMockUIState({
   int alertStatus = 0,
   bool calibrating = false,
 }) {
-  final state = UIState();
+  final state = UIState()
+    ..modernOverlay = false
+    ..lastModelAt = DateTime.now()
+    ..lastRadarAt = DateTime.now();
 
   // connection
   state.isConnected = true;

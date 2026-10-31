@@ -9,6 +9,12 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+# opview：third_party/flutter_webrtc 是 vendored 上游套件（只改了一處 Android Java），
+# 不對它套用本專案的 lint，避免上游寫法造成 analyze 訊息。
+analyzer:
+  exclude:
+    - third_party/**
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`

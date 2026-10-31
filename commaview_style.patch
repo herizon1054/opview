@@ -1,0 +1,1193 @@
+--- a/android/app/src/main/AndroidManifest.xml
++++ b/android/app/src/main/AndroidManifest.xml
+@@ -23,6 +23,8 @@
+         android:usesCleartextTraffic="true">
+         <activity
+             android:name=".MainActivity"
++            android:supportsPictureInPicture="true"
++            android:resizeableActivity="true"
+             android:exported="true"
+             android:launchMode="singleTop"
+             android:taskAffinity=""
+--- a/android/app/src/main/kotlin/org/dragonpilot/opview/MainActivity.kt
++++ b/android/app/src/main/kotlin/org/dragonpilot/opview/MainActivity.kt
+@@ -1,13 +1,64 @@
+ package org.dragonpilot.opview
+ 
++import android.app.AppOpsManager
++import android.os.Process
++import android.app.PictureInPictureParams
++import android.content.pm.PackageManager
++import android.content.res.Configuration
++import android.os.Build
+ import android.os.Bundle
++import android.util.Rational
+ import android.view.WindowManager
++import androidx.annotation.RequiresApi
+ import io.flutter.embedding.android.FlutterActivity
+ import io.flutter.embedding.engine.FlutterEngine
+ import io.flutter.plugin.common.MethodChannel
+ 
+ class MainActivity: FlutterActivity() {
+     private val CHANNEL = "org.dragonpilot.opview/wake_lock"
++
++    // Viewer-only brightness and picture-in-picture
++    private val SYSTEM_CHANNEL = "org.dragonpilot.opview/system"
++    private var systemChannel: MethodChannel? = null
++
++    // shrink to a picture-in-picture window on Home; Dart turns this on while connected
++    private var pipEnabled = false
++
++    private fun pipSupported(): Boolean =
++        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
++            packageManager.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE) &&
++            (getSystemService(APP_OPS_SERVICE) as AppOpsManager).checkOpNoThrow(
++                AppOpsManager.OPSTR_PICTURE_IN_PICTURE, Process.myUid(), packageName
++            ) == AppOpsManager.MODE_ALLOWED
++
++    @RequiresApi(Build.VERSION_CODES.O)
++    private fun pipParams(): PictureInPictureParams {
++        val b = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9))
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
++            // Android 12+: the system shrinks the app itself, with a smooth animation
++            b.setAutoEnterEnabled(pipEnabled)
++            b.setSeamlessResizeEnabled(true)
++        }
++        return b.build()
++    }
++
++    // Android 8-11: going Home calls this, and we ask for the window ourselves
++    override fun onUserLeaveHint() {
++        super.onUserLeaveHint()
++        if (pipEnabled && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
++            Build.VERSION.SDK_INT < Build.VERSION_CODES.S && pipSupported()) {
++            try {
++                enterPictureInPictureMode(pipParams())
++            } catch (e: Exception) {
++                // the head unit refused (PiP turned off for this app): stay as we are
++            }
++        }
++    }
++
++    override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
++        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
++        systemChannel?.invokeMethod("pipChanged", isInPictureInPictureMode)
++    }
+ 
+     override fun onCreate(savedInstanceState: Bundle?) {
+         super.onCreate(savedInstanceState)
+@@ -29,5 +80,45 @@
+                 result.notImplemented()
+             }
+         }
++
++        val system = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYSTEM_CHANNEL)
++        systemChannel = system
++        system.setMethodCallHandler { call, result ->
++            when (call.method) {
++                // whether going Home shrinks the app to a floating window
++                "setPipEnabled" -> {
++                    pipEnabled = call.arguments as? Boolean ?: false
++                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && pipSupported()) {
++                        try {
++                            setPictureInPictureParams(pipParams())
++                        } catch (e: Exception) {
++                            // not allowed on this head unit
++                        }
++                    }
++                    result.success(pipSupported())
++                }
++                // 0..1 for this app's window only; below 0 hands brightness back to the system
++                "setBrightness" -> {
++                    val value = (call.arguments as? Number)?.toFloat() ?: -1f
++                    val attrs = window.attributes
++                    attrs.screenBrightness = if (value < 0f) {
++                        WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
++                    } else {
++                        value.coerceIn(0.01f, 1f)
++                    }
++                    window.attributes = attrs
++                    result.success(null)
++                }
++                "isInPip" -> result.success(
++                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode)
++                "enterPip" -> {
++                    if (pipEnabled && pipSupported() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
++                        try { result.success(enterPictureInPictureMode(pipParams())) }
++                        catch (e: Exception) { result.success(false) }
++                    } else { result.success(false) }
++                }
++                else -> result.notImplemented()
++            }
++        }
+     }
+ }
+--- a/lib/app.dart
++++ b/lib/app.dart
+@@ -5,6 +5,8 @@
+ import 'package:opview/selfdrive/ui/ui_state.dart';
+ import 'package:opview/selfdrive/ui/onroad/augmented_road_view.dart';
+ import 'package:opview/services/connection_manager.dart';
++import 'package:opview/services/viewer_settings.dart';
++import 'package:opview/services/viewer_system.dart' as system;
+ 
+ class OpviewApp extends StatefulWidget {
+   const OpviewApp({super.key});
+@@ -16,6 +18,47 @@
+ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
+   late final UIState _uiState;
+   late final ConnectionManager _connectionManager;
++  final _settings = ViewerSettings();
++  bool _ready = false;
++  bool _streamPaused = false;
++  bool? _pipOffered;
++  int _lifecycleEpoch = 0;
++  AppLifecycleState _lifecycle = AppLifecycleState.resumed;
++
++  void _updatePipOffer() {
++    final want = _uiState.isConnected && _settings.pictureInPicture && !_streamPaused;
++    if (want == _pipOffered) return;
++    _pipOffered = want;
++    system.setPipEnabled(want);
++  }
++  void _settingsChanged() {
++    _uiState.isMetric = _settings.metric;
++    _uiState.modernOverlay = _settings.layout != ViewerLayout.classic;
++    _uiState.notifyNow();
++    _updatePipOffer();
++  }
++  void _pipChanged() {
++    // Closing a floating window may not emit another paused lifecycle event.
++    if (!system.pipMode.value && _lifecycle == AppLifecycleState.paused) {
++      final epoch = _lifecycleEpoch;
++      // Expansion can report PiP=false just before resumed. Give that transition
++      // time to complete instead of tearing down a healthy connection.
++      Future<void>.delayed(const Duration(milliseconds: 250), () {
++        if (mounted && epoch == _lifecycleEpoch && !system.pipMode.value &&
++            _lifecycle == AppLifecycleState.paused) _pauseStream();
++      });
++    }
++  }
++  void _pauseStream() {
++    if (_streamPaused) return;
++    _streamPaused = true;
++    _connectionManager.pause();
++    _updatePipOffer();
++  }
++  Future<void> _loadSettings() async {
++    await _settings.load();
++    if (mounted) setState(() => _ready = true);
++  }
+ 
+   @override
+   void initState() {
+@@ -23,12 +66,25 @@
+     WidgetsBinding.instance.addObserver(this);
+     _uiState = UIState();
+     _connectionManager = ConnectionManager(_uiState);
++    system.listenForPip();
++    system.pipMode.addListener(_pipChanged);
++    _settings.addListener(_settingsChanged);
++    _uiState.addListener(_updatePipOffer);
++    _updatePipOffer();
++    _loadSettings();
+     _connectionManager.start();
+   }
+ 
+   @override
+   void dispose() {
+     WidgetsBinding.instance.removeObserver(this);
++    _lifecycleEpoch++;
++    _uiState.removeListener(_updatePipOffer);
++    _settings.removeListener(_settingsChanged);
++    system.pipMode.removeListener(_pipChanged);
++    system.setPipEnabled(false);
++    system.stopListeningForPip();
++    _settings.dispose();
+     // async cleanup — best-effort, State.dispose() is sync
+     _connectionManager.dispose();
+     _uiState.dispose();
+@@ -37,12 +93,18 @@
+ 
+   @override
+   void didChangeAppLifecycleState(AppLifecycleState state) {
+-    if (state == AppLifecycleState.resumed) {
+-      debugPrint('[opview] app resumed, reconnecting');
++    _lifecycle = state;
++    final epoch = ++_lifecycleEpoch;
++    if (state == AppLifecycleState.resumed && _streamPaused) {
++      _streamPaused = false;
+       _connectionManager.reconnect();
++      _updatePipOffer();
+     } else if (state == AppLifecycleState.paused) {
+-      debugPrint('[opview] app paused, stopping');
+-      _connectionManager.pause();
++      // Query native state to avoid racing the PiP callback while entering PiP.
++      system.isInPip().then((pip) {
++        if (!mounted || epoch != _lifecycleEpoch) return;
++        if (!pip) _pauseStream();
++      });
+     }
+   }
+ 
+@@ -56,8 +118,12 @@
+         scaffoldBackgroundColor: Colors.black,
+       ),
+       home: ListenableBuilder(
+-        listenable: _uiState,
+-        builder: (context, _) => AugmentedRoadView(
++        listenable: Listenable.merge([_uiState, _settings, system.pipMode, system.pipSupported]),
++        builder: (context, _) => !_ready
++            ? const Scaffold(body: Center(child: CircularProgressIndicator()))
++            : AugmentedRoadView(
++          settings: _settings,
++          pip: system.pipMode.value,
+           uiState: _uiState,
+           videoRenderer: _connectionManager.videoRenderer,
+         ),
+--- a/lib/selfdrive/ui/onroad/augmented_road_view.dart
++++ b/lib/selfdrive/ui/onroad/augmented_road_view.dart
+@@ -8,6 +8,14 @@
+ //   2. EngagementBorder (on top of everything)
+ 
+ import 'dart:math';
++import 'dart:async';
++import 'dashboard_hud.dart';
++import 'compact_hud.dart';
++import 'throttled_hud.dart';
++import 'vehicle_details.dart';
++import '../settings/viewer_settings_dialog.dart';
++import 'package:opview/services/viewer_settings.dart';
++import 'package:opview/services/viewer_system.dart' as system;
+ import 'package:flutter/foundation.dart';
+ import 'package:flutter/material.dart';
+ import 'package:flutter_webrtc/flutter_webrtc.dart';
+@@ -28,11 +36,19 @@
+ class AugmentedRoadView extends StatefulWidget {
+   final UIState uiState;
+   final RTCVideoRenderer? videoRenderer;
++  final bool initialRailVisible;
++  final bool showControls;
++  final ViewerSettings? settings;
++  final bool pip;
+ 
+   const AugmentedRoadView({
+     super.key,
+     required this.uiState,
+     this.videoRenderer,
++    this.initialRailVisible = true,
++    this.showControls = true,
++    this.settings,
++    this.pip = false,
+   });
+ 
+   @override
+@@ -40,6 +56,115 @@
+ }
+ 
+ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
++  late bool _showRail;
++  bool _showDetails = false;
++  Timer? _freshnessTimer;
++  bool get _stale => !widget.uiState.isConnected ||
++      (widget.uiState.lastModelAt == null || DateTime.now()
++        .difference(widget.uiState.lastModelAt!).inMilliseconds > 2000);
++
++  @override
++  void initState() {
++    super.initState();
++    _showRail = widget.initialRailVisible;
++    // Watchdog runs on the phone, with no polling or network requests.
++    _freshnessTimer = Timer.periodic(const Duration(seconds: 1), (_) {
++      if (mounted && _stale) setState(() {});
++    });
++  }
++
++  @override
++  void dispose() {
++    _freshnessTimer?.cancel();
++    super.dispose();
++  }
++
++  Future<void> _openSettings() async {
++    if (widget.uiState.alertSize != 0) return;
++    BuildContext? dialogContext;
++    bool closing = false;
++    void checkAlert() {
++      if ((widget.uiState.alertSize == 0 && !system.pipMode.value) || closing || dialogContext == null) return;
++      closing = true;
++      WidgetsBinding.instance.addPostFrameCallback((_) {
++        final ctx = dialogContext;
++        if (ctx != null && ctx.mounted) Navigator.of(ctx).pop();
++      });
++    }
++    widget.uiState.addListener(checkAlert);
++    system.pipMode.addListener(checkAlert);
++    try {
++      await showDialog<void>(context: context, builder: (ctx) {
++        dialogContext = ctx;
++        return ViewerSettingsDialog(settings: widget.settings!);
++      });
++    } finally {
++      dialogContext = null;
++      widget.uiState.removeListener(checkAlert);
++      system.pipMode.removeListener(checkAlert);
++    }
++  }
++
++  Widget _railButton(IconData icon, String label, VoidCallback onTap) =>
++    Padding(padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
++      child: SizedBox(width: 66, height: 62, child: Material(
++        color: const Color(0xFF182127), borderRadius: BorderRadius.circular(16),
++        child: InkWell(borderRadius: BorderRadius.circular(16), onTap: onTap,
++          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
++            Icon(icon, color: dashboardTeal, size: 23), const SizedBox(height: 4),
++            Text(label, style: const TextStyle(fontSize: 10, color: Colors.white70)),
++          ])),
++      )));
++
++  Widget _rail() => Container(width: 78, color: const Color(0xFF0D151B),
++    child: SafeArea(child: SingleChildScrollView(child: Column(children: [
++      const SizedBox(height: 16),
++      Text(widget.uiState.isConnected ? '● LIVE' : '○ OFFLINE',
++        style: const TextStyle(color: dashboardTeal, fontSize: 10, fontWeight: FontWeight.bold)),
++      const SizedBox(height: 12),
++      _railButton(Icons.dashboard_outlined, widget.uiState.modernOverlay ? '儀表介面' : '原版介面', () {
++        if (widget.settings != null) {
++          widget.settings!.setLayout(widget.uiState.modernOverlay ? ViewerLayout.classic : ViewerLayout.dashboard);
++        } else {
++          setState(() { widget.uiState.modernOverlay = !widget.uiState.modernOverlay; });
++        }
++        widget.uiState.notifyNow();
++      }),
++      if (widget.uiState.isConnected && widget.uiState.alertSize == 0)
++      _railButton(Icons.info_outline, '連線資訊', () => setState(() => _showDetails = !_showDetails)),
++      _railButton(Icons.straighten, widget.uiState.isMetric ? 'km/h' : 'mph', () {
++        if (widget.settings != null) {
++          widget.settings!.setMetric(!widget.uiState.isMetric);
++        } else {
++          setState(() { widget.uiState.isMetric = !widget.uiState.isMetric; });
++        }
++        widget.uiState.notifyNow();
++      }),
++      if (widget.settings != null && widget.uiState.alertSize == 0)
++        _railButton(Icons.settings_outlined, '顯示設定', _openSettings),
++      if (widget.settings?.pictureInPicture == true && system.pipSupported.value && widget.uiState.isConnected)
++        _railButton(Icons.picture_in_picture_alt, '子母畫面', () async {
++          final entered = await system.enterPip();
++          if (!entered && mounted) ScaffoldMessenger.of(context).showSnackBar(
++            const SnackBar(content: Text('Android 未允許進入子母畫面')));
++        }),
++      _railButton(Icons.fullscreen, '全螢幕', () => setState(() => _showRail = false)),
++    ]))));
++
++  Widget _details() => Positioned(top: 50, bottom: 20, right: 16,
++    child: Container(width: 270, padding: const EdgeInsets.all(16),
++      decoration: BoxDecoration(color: const Color(0xED10191D), borderRadius: BorderRadius.circular(18)),
++      child: SingleChildScrollView(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
++        const Text('連線資訊', style: TextStyle(fontWeight: FontWeight.bold)),
++        const SizedBox(height: 8),
++        Text('傳輸：WebRTC\n相機：${widget.uiState.streamType}\n裝置：${widget.uiState.deviceType.isEmpty ? "未知" : widget.uiState.deviceType}\n校正：${widget.uiState.calStatus}\n資料：${_stale ? "等待更新" : "接收中"}\n介面運算：手機端',
++          style: const TextStyle(fontSize: 12, height: 1.6, color: Colors.white70)),
++        const SizedBox(height: 8),
++        ...widget.uiState.connectionLog.take(3).map((line) => Text(line,
++          maxLines: 2, overflow: TextOverflow.ellipsis,
++          style: const TextStyle(fontSize: 10, color: Colors.white54))),
++      ]))));
++
+   // cached transform inputs — only recompute when these change
+   List<double> _cachedRpyCalib = [];
+   List<double> _cachedWideFromDeviceEuler = [];
+@@ -57,11 +182,13 @@
+   Widget build(BuildContext context) {
+     return Scaffold(
+       backgroundColor: Colors.black,
+-      body: LayoutBuilder(builder: (context, constraints) {
++      body: Row(children: [
++        if (_showRail && widget.showControls && !widget.pip) _rail(),
++        Expanded(child: LayoutBuilder(builder: (context, constraints) {
+         final screenW = constraints.maxWidth;
+         final screenH = constraints.maxHeight;
+         final scale = screenH / 1080.0;
+-        final borderSize = uiBorderSize * scale;
++        final borderSize = (widget.pip || widget.uiState.modernOverlay ? 3 : uiBorderSize) * scale;
+ 
+         // recompute transform only when inputs change
+         final transform = _getTransform(screenW, screenH);
+@@ -79,7 +206,7 @@
+             children: [
+               // layer 0 + 1a: video + model overlay
+               _videoLayer(),
+-              ClipRect(
++              if (!_stale) ClipRect(
+                 clipper: _ContentClipper(contentRect),
+                 child: CustomPaint(
+                   size: Size(screenW, screenH),
+@@ -100,8 +227,31 @@
+                     child: Stack(
+                       fit: StackFit.expand,
+                       children: [
+-                        HudRenderer(uiState: widget.uiState, scale: scale),
+-                        AlertRenderer(uiState: widget.uiState, scale: scale),
++                        if (widget.pip)
++                          CompactHud(state: widget.uiState, stale: _stale)
++                        else ...[
++                          ThrottledHud(
++                            version: widget.uiState.version,
++                            every: widget.settings?.hudEvery ?? 4,
++                            invalidateKey: (screenW, screenH, _stale, widget.uiState.isMetric,
++                              widget.uiState.modernOverlay, widget.uiState.status,
++                              widget.uiState.experimentalMode, widget.uiState.alertSize,
++                              widget.uiState.leadDistance != null, widget.settings?.layout),
++                            builder: () => Stack(fit: StackFit.expand, children: [
++                              if (widget.uiState.modernOverlay)
++                                DashboardHud(state: widget.uiState, stale: _stale)
++                              else if (!_stale) HudRenderer(uiState: widget.uiState, scale: scale),
++                              if (widget.settings?.layout == ViewerLayout.detailed)
++                                VehicleDetails(state: widget.uiState, stale: _stale),
++                            ]),
++                          ),
++                        ],
++                        if (!widget.pip && _showDetails && widget.uiState.alertSize == 0) _details(),
++                        if (!widget.pip && !_showRail && widget.showControls)
++                          Positioned(top: 8, right: 8, child: IconButton(
++                            tooltip: '顯示操作列', icon: const Icon(Icons.fullscreen_exit),
++                            onPressed: () => setState(() => _showRail = true))),
++                        if (!widget.pip) AlertRenderer(uiState: widget.uiState, scale: scale),
+                       ],
+                     ),
+                   ),
+@@ -118,7 +268,7 @@
+               ),
+ 
+               // layer 3: connecting overlay with rolling status log
+-              if (!widget.uiState.isConnected)
++              if (!widget.pip && !widget.uiState.isConnected)
+                 Container(
+                   color: const Color(0xCC000000),
+                   alignment: Alignment.center,
+@@ -151,7 +301,8 @@
+             ],
+           ),
+         );
+-      }),
++      })),
++      ]),
+     );
+   }
+ 
+--- a/lib/selfdrive/ui/onroad/compact_hud.dart
++++ b/lib/selfdrive/ui/onroad/compact_hud.dart
+@@ -0,0 +1,37 @@
++// Small-window presentation adapted to the existing dplcc telemetry fields.
++import 'package:flutter/material.dart';
++import '../ui_state.dart';
++
++class CompactHud extends StatelessWidget {
++  final UIState state;
++  final bool stale;
++  const CompactHud({super.key, required this.state, required this.stale});
++  @override
++  Widget build(BuildContext context) => LayoutBuilder(builder: (context, c) {
++    final u = c.maxHeight / 100;
++    Widget pill(String text, double font) => Container(
++      padding: EdgeInsets.all(3 * u), color: const Color(0xCC10191D),
++      child: Text(text, style: TextStyle(fontSize: font * u, color: Colors.white,
++        fontWeight: FontWeight.bold, height: 1.1)),
++    );
++    return IgnorePointer(child: Stack(children: [
++      Positioned(top: 3*u, left: 3*u, child: pill(stale ? '—' :
++        '${state.displaySpeed.round()} ${state.isMetric ? "km/h" : "mph"}', 12)),
++      Positioned(top: 3*u, right: 3*u, child: pill(
++        'MAX ${!stale && state.isCruiseSet ? state.setSpeed.round() : "—"}', 8)),
++      if (!stale && state.leadDistance != null)
++        Positioned(bottom: 3*u, left: 0, right: 0, child: Center(child: pill(
++          '${state.leadDistance!.round()} m · ${state.leadHeadway?.toStringAsFixed(1) ?? "—"} s', 7))),
++      if (stale) Positioned(bottom: 3*u, left: 0, right: 0,
++        child: Center(child: pill('資料中斷', 8))),
++      if (state.alertSize != 0)
++        Positioned(bottom: 0, left: 0, right: 0, child: Container(
++          color: state.alertStatus == 2 ? const Color(0xFFCC2233) : const Color(0xEE533C16),
++          padding: EdgeInsets.all(3*u),
++          child: Text([state.alertText1, state.alertText2].where((s) => s.isNotEmpty).join('\n'),
++            maxLines: 3, overflow: TextOverflow.ellipsis,
++            style: TextStyle(color: Colors.white, fontSize: 7*u, fontWeight: FontWeight.bold)),
++        )),
++    ]));
++  });
++}
+--- a/lib/selfdrive/ui/onroad/dashboard_hud.dart
++++ b/lib/selfdrive/ui/onroad/dashboard_hud.dart
+@@ -0,0 +1,106 @@
++// Phone-rendered dashboard inspired by CommaView's public Live View layout.
++import 'dart:math' as math;
++import 'package:flutter/material.dart';
++import '../ui_state.dart';
++
++const dashboardTeal = Color(0xFF61E3D4);
++
++class DashboardHud extends StatelessWidget {
++  final UIState state;
++  final bool stale;
++  const DashboardHud({super.key, required this.state, this.stale = false});
++
++  @override
++  Widget build(BuildContext context) => LayoutBuilder(builder: (context, box) {
++    final width = math.min(box.maxWidth * .60, box.maxHeight * 1.20);
++    final status = stale ? '資料中斷' : switch (state.status) {
++      UIStatus.engaged => 'ENGAGED',
++      UIStatus.override_ => 'OVERRIDE',
++      UIStatus.disengaged => 'DISENGAGED',
++    };
++    final color = stale ? Colors.orangeAccent : state.status == UIStatus.engaged
++        ? dashboardTeal : Colors.white70;
++    return IgnorePointer(child: Stack(children: [
++      const Positioned(top: 16, left: 18, child: Text('opview',
++        style: TextStyle(fontSize: 20, color: Colors.white70, fontWeight: FontWeight.w700))),
++      Positioned(left: 14, bottom: 18, child: Column(
++        crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min,
++        children: [
++          if (state.experimentalMode && !stale)
++            _badge('EXPERIMENTAL', Colors.amberAccent),
++          const SizedBox(height: 6), _badge(status, color),
++        ],
++      )),
++      Positioned(bottom: 14, left: (box.maxWidth - width) / 2, width: width,
++        height: width * .31,
++        child: DecoratedBox(decoration: BoxDecoration(
++          color: const Color(0xDC0D171C), borderRadius: BorderRadius.circular(28),
++          border: Border.all(color: const Color(0x335DE3D4))),
++          child: LayoutBuilder(builder: (context, constraints) {
++            final h = constraints.maxHeight;
++            return Row(children: [
++              Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
++                Text('MAX', style: TextStyle(color: color, fontSize: h * .10,
++                    fontWeight: FontWeight.w700, letterSpacing: 2)),
++                Text(!stale && state.isCruiseSet ? '${state.setSpeed.round()}' : '—',
++                    style: TextStyle(fontSize: h * .26, fontWeight: FontWeight.w700)),
++              ])),
++              Expanded(flex: 3, child: CustomPaint(
++                painter: _GaugePainter(stale ? 0 : state.displaySpeed,
++                  state.isMetric ? 160 : 100, color),
++                child: Center(child: Column(mainAxisAlignment: MainAxisAlignment.end, children: [
++                  Text(stale ? '—' : '${state.displaySpeed.round()}',
++                    style: TextStyle(fontSize: h * .42, fontWeight: FontWeight.w700, height: 1)),
++                  Text(state.isMetric ? 'km/h' : 'mph',
++                    style: TextStyle(fontSize: h * .10, color: Colors.white70)),
++                  SizedBox(height: h * .09),
++                  Text(stale ? 'TELEMETRY STALE' : 'LIVE TELEMETRY',
++                    style: TextStyle(fontSize: h * .065, color: color, letterSpacing: 1.3)),
++                  SizedBox(height: h * .07),
++                ])),
++              )),
++              Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
++                Icon(Icons.directions_car_outlined, color: color, size: h * .18),
++                Text(!stale && state.leadDistance != null ? '${state.leadDistance!.round()} m' : '—',
++                    style: TextStyle(fontSize: h * .12, fontWeight: FontWeight.w600)),
++                Text(!stale && state.leadHeadway != null ? '${state.leadHeadway!.toStringAsFixed(1)} s' : '—',
++                    style: TextStyle(fontSize: h * .10, color: Colors.white60)),
++              ])),
++            ]);
++          }),
++        )),
++    ]));
++  });
++
++  Widget _badge(String text, Color color) => Container(
++    padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
++    decoration: BoxDecoration(color: const Color(0xDB10191D),
++      borderRadius: BorderRadius.circular(20), border: Border.all(color: color.withAlpha(100))),
++    child: Text(text, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
++  );
++}
++
++class _GaugePainter extends CustomPainter {
++  final double speed, maximum;
++  final Color color;
++  _GaugePainter(this.speed, this.maximum, this.color);
++  @override
++  void paint(Canvas canvas, Size size) {
++    final radius = math.min(size.width / 2 - 6, size.height * .76);
++    if (radius <= 0) return;
++    final center = Offset(size.width / 2, size.height * .82);
++    final rect = Rect.fromCircle(center: center, radius: radius);
++    final pen = Paint()..style = PaintingStyle.stroke..strokeWidth = 4..strokeCap = StrokeCap.round;
++    canvas.drawArc(rect, math.pi, math.pi, false, pen..color = const Color(0xFF35484D));
++    final fraction = speed.isFinite ? (speed / maximum).clamp(0.0, 1.0) : 0.0;
++    canvas.drawArc(rect, math.pi, math.pi * fraction, false, pen..color = color);
++    pen..strokeWidth = 1.5..color = Colors.white38;
++    for (var i = 0; i <= 10; i++) {
++      final a = math.pi + i * math.pi / 10;
++      final outer = Offset(math.cos(a), math.sin(a));
++      canvas.drawLine(center + outer * (radius - 7), center + outer * (radius - 13), pen);
++    }
++  }
++  @override
++  bool shouldRepaint(_GaugePainter old) => old.speed != speed || old.maximum != maximum || old.color != color;
++}
+--- a/lib/selfdrive/ui/onroad/model_renderer.dart
++++ b/lib/selfdrive/ui/onroad/model_renderer.dart
+@@ -94,8 +94,8 @@
+     ));
+ 
+     // project path (shorten for lead vehicle)
+-    if (state.leadOne != null && state.leadOne!['status'] == true) {
+-      final leadD = (state.leadOne!['dRel'] as num).toDouble() * 2.0;
++    if (state.leadDistance != null) {
++      final leadD = state.leadDistance! * 2.0;
+       maxDist = (leadD - min(leadD * 0.35, 10.0)).clamp(0.0, maxDist);
+     }
+     final pathMaxIdx = _getPathLengthIdx(pathX, maxDist);
+@@ -135,6 +135,15 @@
+   void _drawPath(Canvas canvas, List<Offset> pathPoly) {
+     if (pathPoly.isEmpty) return;
+ 
++    if (state.modernOverlay) {
++      _drawGradientPolygon(canvas, pathPoly, const [
++        Color(0x882CD4C3), Color(0x552CD4C3), Color(0x102CD4C3),
++      ], [0.0, 0.6, 1.0]);
++      final outline = Path()..addPolygon(pathPoly, true);
++      canvas.drawPath(outline, Paint()..color = const Color(0xAA61E3D4)
++        ..style = PaintingStyle.stroke..strokeWidth = 2);
++      return;
++    }
+     if (state.experimentalMode) {
+       _drawExperimentalPath(canvas, pathPoly);
+       return;
+@@ -188,18 +197,53 @@
+     for (final lead in leads) {
+       if (lead == null || lead['status'] != true) continue;
+ 
+-      final dRel = (lead['dRel'] as num).toDouble();
+-      final vRel = (lead['vRel'] as num).toDouble();
+-      final yRel = (lead['yRel'] as num).toDouble();
++      final dRel = (lead['dRel'] as num?)?.toDouble();
++      final vRel = (lead['vRel'] as num?)?.toDouble() ?? 0;
++      final yRel = (lead['yRel'] as num?)?.toDouble();
++      if (dRel == null || yRel == null || !dRel.isFinite ||
++          !yRel.isFinite || !vRel.isFinite || dRel <= 0) continue;
++      if (state.lastRadarAt != null &&
++          DateTime.now().difference(state.lastRadarAt!).inMilliseconds > 2000) continue;
+       final idx = _getPathLengthIdx(pathX, dRel);
+ 
+       final z = (idx < state.pathZ.length) ? state.pathZ[idx] : 0.0;
+       final point = _mapToScreen(dRel, -yRel, z + _pathOffsetZ);
+       if (point == null) continue;
+ 
++      if (state.modernOverlay) {
++        _drawLeadBox(canvas, point, dRel);
++        continue;
++      }
+       final lv = _buildLeadVehicle(dRel, vRel, point);
+       _drawLeadTriangles(canvas, lv);
+     }
++  }
++
++  // A projected radar marker, not an image-detection bounding box.
++  void _drawLeadBox(Canvas canvas, Offset point, double distance) {
++    final scale = (contentRect.height / 600).clamp(0.6, 2.0);
++    final width = (1500 / distance).clamp(28.0, 85.0) * scale;
++    final rect = Rect.fromLTWH(point.dx - width / 2, point.dy - width, width, width * .7);
++    final paint = Paint()..color = const Color(0xFF61E3D4)
++      ..style = PaintingStyle.stroke..strokeWidth = 2 * scale;
++    final arm = width * .23;
++    for (final corner in [rect.topLeft, rect.topRight, rect.bottomLeft, rect.bottomRight]) {
++      final dx = corner.dx == rect.left ? arm : -arm;
++      final dy = corner.dy == rect.top ? arm : -arm;
++      canvas.drawPath(Path()..moveTo(corner.dx + dx, corner.dy)
++        ..lineTo(corner.dx, corner.dy)..lineTo(corner.dx, corner.dy + dy), paint);
++    }
++    final headway = state.vEgo.isFinite && state.vEgo > 1 ? distance / state.vEgo : null;
++    final label = '${distance.round()} m · ${headway == null ? "—" : headway.toStringAsFixed(1)} s';
++    final text = TextPainter(text: TextSpan(text: label,
++      style: TextStyle(color: Colors.white, fontSize: 12 * scale, fontWeight: FontWeight.w600)),
++      textDirection: TextDirection.ltr)..layout();
++    final origin = Offset(point.dx - text.width / 2, rect.bottom + 8 * scale);
++    canvas.drawRRect(RRect.fromRectAndRadius(
++      Rect.fromLTWH(origin.dx - 7 * scale, origin.dy - 4 * scale,
++        text.width + 14 * scale, text.height + 8 * scale), Radius.circular(10 * scale)),
++      Paint()..color = const Color(0xDD10191D));
++    text.paint(canvas, origin);
+   }
+ 
+   // -- projection --
+--- a/lib/selfdrive/ui/onroad/throttled_hud.dart
++++ b/lib/selfdrive/ui/onroad/throttled_hud.dart
+@@ -0,0 +1,31 @@
++// Adapted from Rivian ThrottledByVersion. Cache only presentation widgets;
++// caller invalidates immediately on alerts, status, stale data or local settings.
++import 'package:flutter/widgets.dart';
++
++class ThrottledHud extends StatefulWidget {
++  final int version, every;
++  final Object invalidateKey;
++  final Widget Function() builder;
++  const ThrottledHud({super.key, required this.version, required this.every,
++    required this.invalidateKey, required this.builder});
++  @override
++  State<ThrottledHud> createState() => _ThrottledHudState();
++}
++class _ThrottledHudState extends State<ThrottledHud> {
++  Widget? _child;
++  int _builtAt = 0;
++  Object? _key;
++  int? _every;
++  @override
++  void didChangeDependencies() { super.didChangeDependencies(); _child = null; }
++  @override
++  Widget build(BuildContext context) {
++    final delta = widget.version - _builtAt;
++    if (_child == null || _key != widget.invalidateKey || _every != widget.every ||
++        delta < 0 || delta >= widget.every) {
++      _builtAt = widget.version; _key = widget.invalidateKey; _every = widget.every;
++      _child = RepaintBoundary(child: widget.builder());
++    }
++    return _child!;
++  }
++}
+--- a/lib/selfdrive/ui/onroad/vehicle_details.dart
++++ b/lib/selfdrive/ui/onroad/vehicle_details.dart
+@@ -0,0 +1,23 @@
++import 'package:flutter/material.dart';
++import '../ui_state.dart';
++
++// Uses only fields from carState already present on the existing stream.
++class VehicleDetails extends StatelessWidget {
++  final UIState state;
++  final bool stale;
++  const VehicleDetails({super.key, required this.state, required this.stale});
++  @override
++  Widget build(BuildContext context) => IgnorePointer(child: Align(
++    alignment: Alignment.topRight,
++    child: Container(margin: const EdgeInsets.fromLTRB(0, 12, 12, 0),
++      padding: const EdgeInsets.all(10),
++      decoration: BoxDecoration(color: const Color(0xD010191D), borderRadius: BorderRadius.circular(14)),
++      child: Text(
++        '方向盤  ${stale ? "—" : state.steeringAngleDeg?.toStringAsFixed(1) ?? "—"}°\n'
++        '加速度  ${stale ? "—" : state.aEgo?.toStringAsFixed(2) ?? "—"} m/s²\n'
++        '左方向燈  ${!stale && state.leftBlinker ? "亮" : "—"}    右  ${!stale && state.rightBlinker ? "亮" : "—"}\n'
++        '左盲點  ${!stale && state.leftBlindspot ? "偵測" : "—"}    右  ${!stale && state.rightBlindspot ? "偵測" : "—"}',
++        style: const TextStyle(color: Colors.white70, fontSize: 11, height: 1.5)),
++    ),
++  ));
++}
+--- a/lib/selfdrive/ui/settings/viewer_settings_dialog.dart
++++ b/lib/selfdrive/ui/settings/viewer_settings_dialog.dart
+@@ -0,0 +1,46 @@
++import 'package:flutter/material.dart';
++import 'package:opview/services/viewer_settings.dart';
++import 'package:opview/services/viewer_system.dart' as system;
++
++class ViewerSettingsDialog extends StatelessWidget {
++  final ViewerSettings settings;
++  const ViewerSettingsDialog({super.key, required this.settings});
++  @override
++  Widget build(BuildContext context) => ListenableBuilder(
++    listenable: Listenable.merge([settings, system.pipSupported, system.brightnessSupported]),
++    builder: (context, _) => AlertDialog(
++      title: const Text('手機顯示設定'),
++      content: SizedBox(width: 420, child: SingleChildScrollView(child: Column(
++        mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
++        children: [
++          DropdownButton<ViewerLayout>(value: settings.layout, isExpanded: true,
++            items: const [
++              DropdownMenuItem(value: ViewerLayout.dashboard, child: Text('儀表介面')),
++              DropdownMenuItem(value: ViewerLayout.classic, child: Text('原版介面')),
++              DropdownMenuItem(value: ViewerLayout.detailed, child: Text('儀表＋車輛資訊')),
++            ], onChanged: (v) { if (v != null) settings.setLayout(v); }),
++          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('公制 km/h'),
++            value: settings.metric, onChanged: settings.setMetric),
++          if (system.pipSupported.value)
++          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('子母畫面 PiP'),
++            subtitle: const Text('連線時按 Home 保留畫面'),
++            value: settings.pictureInPicture,
++            onChanged: settings.setPip),
++          if (system.brightnessSupported.value)
++          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('亮度跟隨系統'),
++            value: settings.brightness == null,
++            onChanged: (v) => settings.setBrightness(v ? null : .6)),
++          if (system.brightnessSupported.value && settings.brightness != null) ...[
++            Text('App 亮度 ${(settings.brightness! * 100).round()}%'),
++            Slider(min: .05, max: 1, value: settings.brightness!,
++              onChanged: settings.setBrightness),
++          ],
++          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('降低儀表更新頻率'),
++            subtitle: const Text('約 5 Hz；路徑與警告不降頻'),
++            value: settings.hudEvery == 4, onChanged: (v) => settings.setHudEvery(v ? 4 : 1)),
++        ],
++      ))),
++      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('完成'))],
++    ),
++  );
++}
+--- a/lib/selfdrive/ui/ui_state.dart
++++ b/lib/selfdrive/ui/ui_state.dart
+@@ -24,6 +24,26 @@
+   // engagement
+   UIStatus status = UIStatus.disengaged;
+   bool started = false;
++
++  // Phone-only presentation state. Never sent back to comma.
++  bool modernOverlay = true;
++  DateTime? lastModelAt;
++  DateTime? lastRadarAt;
++  double? get leadDistance {
++    if (leadOne?['status'] != true) return null;
++    if (lastRadarAt != null && DateTime.now().difference(lastRadarAt!).inMilliseconds > 2000) return null;
++    final value = leadOne?['dRel'];
++    if (value is! num || !value.isFinite || value <= 0) return null;
++    return value.toDouble();
++  }
++  // Time headway, NOT time to collision. Undefined at walking speed/stopped.
++  double? get leadHeadway => leadDistance != null && vEgo.isFinite && vEgo > 1.0
++      ? leadDistance! / vEgo : null;
++
++  double? steeringAngleDeg;
++  double? aEgo;
++  bool leftBlinker = false, rightBlinker = false;
++  bool leftBlindspot = false, rightBlindspot = false;
+ 
+   // carState
+   double vEgo = 0.0;
+@@ -114,6 +134,12 @@
+   // -- apply methods: one per cereal service --
+ 
+   void applyCarState(Map<String, dynamic> data) {
++    steeringAngleDeg = _finite(data['steeringAngleDeg']);
++    aEgo = _finite(data['aEgo']);
++    leftBlinker = data['leftBlinker'] == true;
++    rightBlinker = data['rightBlinker'] == true;
++    leftBlindspot = data['leftBlindspot'] == true;
++    rightBlindspot = data['rightBlindspot'] == true;
+     vEgo = (data['vEgo'] as num?)?.toDouble() ?? 0.0;
+     vEgoCluster = (data['vEgoCluster'] as num?)?.toDouble() ?? 0.0;
+     vCruiseCluster = (data['vCruiseCluster'] as num?)?.toDouble() ?? 0.0;
+@@ -146,6 +172,7 @@
+   }
+ 
+   void applyModelV2(Map<String, dynamic> data) {
++    lastModelAt = DateTime.now();
+     _fillDoubles(pathX, data['position']?['x']);
+     _fillDoubles(pathY, data['position']?['y']);
+     _fillDoubles(pathZ, data['position']?['z']);
+@@ -184,6 +211,7 @@
+   }
+ 
+   void applyRadarState(Map<String, dynamic> data) {
++    lastRadarAt = DateTime.now();
+     leadOne = data['leadOne'] as Map<String, dynamic>?;
+     leadTwo = data['leadTwo'] as Map<String, dynamic>?;
+     // no notify — picked up on next modelV2
+@@ -230,6 +258,8 @@
+ 
+   /// is cruise available (not -1)
+   bool get isCruiseAvailable => _rawSetSpeed != -1;
++
++  double? _finite(dynamic value) => value is num && value.isFinite ? value.toDouble() : null;
+ 
+   // -- helpers --
+ 
+--- a/lib/services/viewer_settings.dart
++++ b/lib/services/viewer_settings.dart
+@@ -0,0 +1,51 @@
++import 'package:flutter/foundation.dart';
++import 'package:shared_preferences/shared_preferences.dart';
++import 'viewer_system.dart' as system;
++
++enum ViewerLayout { dashboard, classic, detailed }
++
++class ViewerSettings extends ChangeNotifier {
++  ViewerLayout layout = ViewerLayout.dashboard;
++  bool metric = true;
++  bool pictureInPicture = false;
++  double? brightness;
++  int hudEvery = 4; // HUD ~5 Hz when modelV2 is 20 Hz; path and alerts unchanged.
++  SharedPreferences? _prefs;
++  bool _disposed = false;
++
++  Future<void> load() async {
++    final prefs = await SharedPreferences.getInstance();
++    if (_disposed) return;
++    _prefs = prefs;
++    final name = prefs.getString('viewer_layout');
++    layout = ViewerLayout.values.firstWhere((e) => e.name == name, orElse: () => ViewerLayout.dashboard);
++    metric = prefs.getBool('viewer_metric') ?? true;
++    pictureInPicture = prefs.getBool('viewer_pip') ?? false;
++    final b = prefs.getDouble('viewer_brightness');
++    brightness = b != null && b.isFinite && b >= 0 ? b.clamp(.05, 1.0).toDouble() : null;
++    hudEvery = prefs.getInt('viewer_hud_every') == 1 ? 1 : 4;
++    await system.setAppBrightness(brightness);
++    if (!_disposed) notifyListeners();
++  }
++  void setLayout(ViewerLayout value) {
++    layout = value; _prefs?.setString('viewer_layout', value.name); notifyListeners();
++  }
++  void setMetric(bool value) {
++    metric = value; _prefs?.setBool('viewer_metric', value); notifyListeners();
++  }
++  void setPip(bool value) {
++    pictureInPicture = value; _prefs?.setBool('viewer_pip', value); notifyListeners();
++  }
++  void setBrightness(double? value) {
++    brightness = value == null || !value.isFinite ? null : value.clamp(.05, 1.0).toDouble();
++    system.setAppBrightness(brightness);
++    _prefs?.setDouble('viewer_brightness', brightness ?? -1);
++    notifyListeners();
++  }
++  void setHudEvery(int value) {
++    hudEvery = value == 1 ? 1 : 4;
++    _prefs?.setInt('viewer_hud_every', hudEvery); notifyListeners();
++  }
++  @override
++  void dispose() { _disposed = true; super.dispose(); }
++}
+--- a/lib/services/viewer_system.dart
++++ b/lib/services/viewer_system.dart
+@@ -0,0 +1,45 @@
++// Selected PiP / window-brightness functionality from opview-rivian-support.
++// No APK installer, remote commands, or extra Android permissions.
++import 'package:flutter/foundation.dart';
++import 'package:flutter/services.dart';
++
++const _channel = MethodChannel('org.dragonpilot.opview/system');
++final pipMode = ValueNotifier<bool>(false);
++final pipSupported = ValueNotifier<bool>(false);
++final brightnessSupported = ValueNotifier<bool>(false);
++
++void listenForPip() {
++  _channel.setMethodCallHandler((call) async {
++    if (call.method == 'pipChanged') pipMode.value = call.arguments == true;
++  });
++}
++void stopListeningForPip() {
++  _channel.setMethodCallHandler(null);
++  pipMode.value = false;
++}
++Future<void> setAppBrightness(double? value) async {
++  try {
++    await _channel.invokeMethod('setBrightness', value ?? -1.0);
++    brightnessSupported.value = true;
++  } on PlatformException { brightnessSupported.value = false; }
++  on MissingPluginException { brightnessSupported.value = false; }
++}
++Future<void> setPipEnabled(bool enabled) async {
++  try {
++    pipSupported.value = await _channel.invokeMethod<bool>('setPipEnabled', enabled) ?? false;
++  } on PlatformException { pipSupported.value = false; }
++  on MissingPluginException { pipSupported.value = false; }
++}
++Future<bool> isInPip() async {
++  try { return await _channel.invokeMethod<bool>('isInPip') ?? false; }
++  on PlatformException { return false; }
++  on MissingPluginException { return false; }
++}
++Future<bool> enterPip() async {
++  try {
++    final entered = await _channel.invokeMethod<bool>('enterPip') ?? false;
++    if (!entered) pipSupported.value = false;
++    return entered;
++  } on PlatformException { pipSupported.value = false; return false; }
++  on MissingPluginException { pipSupported.value = false; return false; }
++}
+--- a/test/dashboard_test.dart
++++ b/test/dashboard_test.dart
+@@ -0,0 +1,59 @@
++import 'package:flutter/material.dart';
++import 'package:flutter_test/flutter_test.dart';
++import 'package:opview/selfdrive/ui/ui_state.dart';
++import 'package:opview/selfdrive/ui/onroad/augmented_road_view.dart';
++import 'package:opview/selfdrive/ui/onroad/dashboard_hud.dart';
++import 'golden/mock_ui_state.dart';
++
++void main() {
++  test('headway is distance / ego speed; invalid or stale lead is absent', () {
++    final state = UIState()..vEgo = 20;
++    state.applyRadarState({'leadOne': {'status': true, 'dRel': 40}});
++    expect(state.leadHeadway, 2);
++    state.vEgo = 0;
++    expect(state.leadHeadway, isNull);
++    state.applyRadarState({'leadOne': {'status': false, 'dRel': 40}});
++    expect(state.leadDistance, isNull);
++    state.applyRadarState({'leadOne': {'status': true, 'dRel': double.nan}});
++    expect(state.leadDistance, isNull);
++    state.applyRadarState({'leadOne': {'status': true, 'dRel': 40}});
++    state.lastRadarAt = DateTime.now().subtract(const Duration(seconds: 3));
++    expect(state.leadDistance, isNull);
++    state.dispose();
++  });
++
++  for (final size in [const Size(844, 390), const Size(1024, 768), const Size(1280, 480)]) {
++    testWidgets('dashboard controls and alert priority $size', (tester) async {
++      tester.view.physicalSize = size;
++      tester.view.devicePixelRatio = 1;
++      addTearDown(() { tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio(); });
++      final state = createMockUIState()..modernOverlay = true;
++      await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
++        home: AugmentedRoadView(uiState: state)));
++      expect(find.byType(DashboardHud), findsOneWidget);
++      expect(tester.takeException(), isNull);
++      await tester.tap(find.text('連線資訊'));
++      await tester.pump();
++      expect(find.textContaining('傳輸：WebRTC'), findsOneWidget);
++      await tester.tap(find.byIcon(Icons.straighten));
++      await tester.pump();
++      expect(state.isMetric, isFalse);
++      await tester.tap(find.text('全螢幕'));
++      await tester.pump();
++      expect(find.byIcon(Icons.fullscreen_exit), findsOneWidget);
++      await tester.tap(find.byIcon(Icons.fullscreen_exit));
++      await tester.pump();
++      state.alertSize = 3;
++      state.alertStatus = 2;
++      state.alertText1 = 'TAKE CONTROL';
++      state.lastModelAt = DateTime.now().subtract(const Duration(seconds: 3));
++      await tester.pump(const Duration(seconds: 1));
++      expect(find.text('TAKE CONTROL'), findsOneWidget);
++      expect(find.textContaining('傳輸：WebRTC'), findsNothing);
++      expect(find.text('資料中斷'), findsOneWidget);
++      expect(tester.takeException(), isNull);
++      await tester.pumpWidget(const SizedBox.shrink());
++      state.dispose();
++    });
++  }
++}
+--- a/test/golden/mock_ui_state.dart
++++ b/test/golden/mock_ui_state.dart
+@@ -16,7 +16,10 @@
+   int alertStatus = 0,
+   bool calibrating = false,
+ }) {
+-  final state = UIState();
++  final state = UIState()
++    ..modernOverlay = false
++    ..lastModelAt = DateTime.now()
++    ..lastRadarAt = DateTime.now();
+ 
+   // connection
+   state.isConnected = true;
+--- a/test/golden/screenshot_test.dart
++++ b/test/golden/screenshot_test.dart
+@@ -111,6 +111,8 @@
+             theme: ThemeData(fontFamily: 'Roboto'),
+             home: AugmentedRoadView(
+               uiState: state,
++              initialRailVisible: false,
++              showControls: false,
+               videoRenderer: null, // black background in tests
+             ),
+           ),
+@@ -122,6 +124,9 @@
+           matchesGoldenFile('goldens/${screenName}_$scenarioName.png'),
+         );
+ 
++        await tester.pumpWidget(const SizedBox.shrink());
++        state.dispose();
++
+         // Re-throw non-overflow errors
+         for (final e in errors) {
+           old?.call(e);
+--- a/test/viewer_features_test.dart
++++ b/test/viewer_features_test.dart
+@@ -0,0 +1,102 @@
++import 'package:flutter/material.dart';
++import 'package:flutter/services.dart';
++import 'package:flutter_test/flutter_test.dart';
++import 'package:shared_preferences/shared_preferences.dart';
++import 'package:opview/services/viewer_settings.dart';
++import 'package:opview/services/viewer_system.dart' as system;
++import 'package:opview/selfdrive/ui/onroad/throttled_hud.dart';
++import 'package:opview/selfdrive/ui/onroad/augmented_road_view.dart';
++import 'package:opview/selfdrive/ui/onroad/compact_hud.dart';
++import 'golden/mock_ui_state.dart';
++import 'package:opview/selfdrive/ui/settings/viewer_settings_dialog.dart';
++
++void main() {
++  TestWidgetsFlutterBinding.ensureInitialized();
++  const channel = MethodChannel('org.dragonpilot.opview/system');
++  final calls = <MethodCall>[];
++  setUp(() {
++    SharedPreferences.setMockInitialValues({});
++    calls.clear();
++    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
++        .setMockMethodCallHandler(channel, (call) async {
++      calls.add(call);
++      return call.method == 'setBrightness' ? null : true;
++    });
++  });
++  tearDown(() {
++    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel, null);
++  });
++
++  testWidgets('unsupported native controls are hidden, not disabled', (tester) async {
++    final settings = ViewerSettings();
++    await settings.load();
++    system.pipSupported.value = false;
++    system.brightnessSupported.value = false;
++    await tester.pumpWidget(MaterialApp(home: ViewerSettingsDialog(settings: settings)));
++    expect(find.text('子母畫面 PiP'), findsNothing);
++    expect(find.text('亮度跟隨系統'), findsNothing);
++    expect(find.byType(Slider), findsNothing);
++    expect(find.text('公制 km/h'), findsOneWidget);
++    await tester.pumpWidget(const SizedBox.shrink());
++    settings.dispose();
++  });
++
++  test('settings persist and brightness affects only the native window channel', () async {
++    final settings = ViewerSettings();
++    await settings.load();
++    settings.setLayout(ViewerLayout.detailed);
++    settings.setMetric(false);
++    settings.setPip(true);
++    settings.setBrightness(.3);
++    settings.setHudEvery(1);
++    await Future<void>.delayed(Duration.zero);
++    final restored = ViewerSettings();
++    await restored.load();
++    expect(restored.layout, ViewerLayout.detailed);
++    expect(restored.metric, false);
++    expect(restored.pictureInPicture, true);
++    expect(restored.brightness, .3);
++    expect(restored.hudEvery, 1);
++    restored.setBrightness(null);
++    await Future<void>.delayed(Duration.zero);
++    expect(calls.last.method, 'setBrightness');
++    expect(calls.last.arguments, -1.0);
++    settings.dispose(); restored.dispose();
++  });
++
++  test('PiP capability and entry use native methods', () async {
++    await system.setPipEnabled(true);
++    expect(system.pipSupported.value, true);
++    expect(await system.enterPip(), true);
++    expect(await system.isInPip(), true);
++    expect(calls.map((c) => c.method), ['setPipEnabled', 'enterPip', 'isInPip']);
++  });
++
++  testWidgets('HUD skips intermediate samples and invalidates for important state', (tester) async {
++    var builds = 0;
++    Future<void> frame(int version, String status) => tester.pumpWidget(
++      MaterialApp(home: ThrottledHud(version: version, every: 4, invalidateKey: status,
++        builder: () { builds++; return Text('$version:$status'); })),
++    );
++    await frame(0, 'engaged');
++    for (var i = 1; i < 4; i++) { await frame(i, 'engaged'); }
++    expect(builds, 1);
++    await frame(4, 'engaged'); expect(builds, 2);
++    await frame(5, 'disengaged'); expect(builds, 3);
++    expect(find.text('5:disengaged'), findsOneWidget);
++  });
++
++  testWidgets('PiP hides controls and renders alerts in a small window', (tester) async {
++    tester.view.physicalSize = const Size(320, 180);
++    tester.view.devicePixelRatio = 1;
++    addTearDown(() { tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio(); });
++    final state = createMockUIState(alertText1: 'TAKE CONTROL', alertSize: 3, alertStatus: 2);
++    await tester.pumpWidget(MaterialApp(home: AugmentedRoadView(uiState: state, pip: true)));
++    expect(find.byType(CompactHud), findsOneWidget);
++    expect(find.text('連線資訊'), findsNothing);
++    expect(find.text('TAKE CONTROL'), findsOneWidget);
++    expect(tester.takeException(), isNull);
++    await tester.pumpWidget(const SizedBox.shrink());
++    state.dispose();
++  });
++}

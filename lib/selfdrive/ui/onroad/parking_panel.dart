@@ -313,10 +313,15 @@ class _ParkingPanelState extends State<ParkingPanel>
                             lot.lat,
                             lot.lon,
                           ).round();
-                          final label = (a?.label(now) ?? '無空位資料').replaceAll(
-                            '無空位資料',
-                            '無空位',
-                          );
+                          final rawLabel = a?.label(now);
+                          final label = switch (rawLabel) {
+                            null || '無空位資料' || '空位未知' => '無資料',
+                            '汽車已滿' => '無空位',
+                            _ => rawLabel!.replaceFirstMapped(
+                              RegExp(r'^汽車 (\d+) 位$'),
+                              (m) => '剩餘 ${m[1]} 格',
+                            ),
+                          };
                           final t = (a?.sourceTime ?? a?.receivedAt)?.toLocal();
                           final time = t == null
                               ? '時間不明'

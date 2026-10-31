@@ -1,6 +1,6 @@
-# Opview 停車查詢 R13：加入地方政府路外資料
+# Opview 停車查詢 R14：加入地方政府路外資料
 
-原始碼覆蓋包，不是 APK。可覆蓋原始 opview-noline 或 R1–R12；依相對路徑覆蓋專案根目錄，執行 flutter pub get，再重新編譯。新增 csv 依賴；pubspec.lock 未重新產生。無需刪除檔案。
+原始碼覆蓋包，不是 APK。可覆蓋原始 opview-noline 或 R1–R13；依相對路徑覆蓋專案根目錄，執行 flutter pub get，再重新編譯。新增 csv 依賴；pubspec.lock 未重新產生。無需刪除檔案。
 
 ## 本版新增
 
@@ -106,3 +106,17 @@ flutter build apk --release
 ## R13 驗證補充
 
 51 項核心測試通過，新增預設測試流程超過舊十分鐘期限、完成 57 次資料請求且無遺留待測項目的回歸驗證。測試採模擬 API 與時鐘，不是實際縣市服務可用性保證。UI 報告標示 R13。請保持 App 前景，看到「全部端點測試完成」再複製報告。
+
+## R14：TDX 回應結構相容與診斷
+
+實機 log：23:59:24 位置下載格式錯誤；測試中多個 TDX 端點也格式錯誤，新北地方位置 1291 筆、空位 1366 筆成功。這不代表 TDX 縣市不支援。當前官方 OpenAPI 仍描述 Items/Count，實機 log 未記錄原始 JSON，尚不能確認實際結構或宣稱根因已驗證。
+
+- 位置下載、空位查詢、縣市測試共用正規化處理，保留官方 Items，另相容直接陣列、items 及對應的 CarParks/ParkingSegments/ParkingAvailabilities 清單。這些相容分支不是本次實機回應已確認的格式。
+- 每列必須具有正確 CarParkID 或 ParkingSegmentID；不會把任意錯誤物件或未知清單當空資料成功。Count 異常停止、不更新完整快取；缺少 Count 仍分頁至空清單。
+- 格式失敗顯示 HTTP 200、JSON 型別、頂層欄位名稱，不記錄回應值、金鑰、Token 或完整 JSON。測試成功也記錄辨識到的容器形狀。
+- 區分使用者按停止、關閉視窗、App 進入背景等取消原因，記入報告與 log。
+- 第一次 log 中測試確實因 hidden/paused 停止；68 秒那次在停止前無背景事件，無法用舊 log 區分停止按鈕與關閉視窗，不能歸因時間限制。
+- 維持不限總時間與每分鐘 5 筆節流。請保持前景至「全部端點測試完成」，再複製報告。
+- 55 項純 Dart 核心測試通過；核心靜態分析無問題。未使用使用者金鑰取得實際 TDX JSON，未完成 APK/實機驗證。
+
+官方規格查核來源（2026-11-01）：https://tdx.transportdata.tw/webapi/File/Swagger/V3/945f57da-f29d-4dfd-94ec-c35d9f62be7d

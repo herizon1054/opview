@@ -15,6 +15,7 @@ class _ParkingTestDialogState extends State<ParkingTestDialog>
   Map<String, String> _results = {};
   String _status = '準備測試…';
   bool _running = true;
+  String? _stopReason;
   final _watch = Stopwatch();
   Timer? _timer;
   @override
@@ -38,7 +39,12 @@ class _ParkingTestDialogState extends State<ParkingTestDialog>
         },
         progress: (message) {
           debugPrint('[parking-test] $message');
-          if (mounted) setState(() => _status = message);
+          if (mounted)
+            setState(
+              () => _status = message == '測試已停止' && _stopReason != null
+                  ? '測試已停止：$_stopReason'
+                  : message,
+            );
         },
       );
     } catch (_) {
@@ -53,8 +59,12 @@ class _ParkingTestDialogState extends State<ParkingTestDialog>
     }
   }
 
-  void _stop() {
-    if (_running) parkingApi.cancel();
+  void _stop([String reason = '使用者按停止']) {
+    if (_running && _stopReason == null) {
+      _stopReason = reason;
+      debugPrint('[parking-test] 停止原因：$reason');
+      parkingApi.cancel();
+    }
   }
 
   @override
@@ -62,16 +72,16 @@ class _ParkingTestDialogState extends State<ParkingTestDialog>
     if (state == AppLifecycleState.hidden ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached)
-      _stop();
+      _stop('App 進入背景：${state.name}');
   }
 
   String get _report =>
-      'R13 停車端點測試／${_watch.elapsed.inSeconds} 秒\n$_status\n'
+      'R14 停車端點測試／${_watch.elapsed.inSeconds} 秒\n$_status\n'
       'TDX 每端點最多取 1 筆樣本；不代表全縣市或即時空位正確。\n'
       '${_results.entries.map((e) => '${e.key}: ${e.value}').join('\n')}';
   @override
   void dispose() {
-    _stop();
+    _stop('關閉測試視窗');
     _timer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
@@ -111,7 +121,8 @@ class _ParkingTestDialogState extends State<ParkingTestDialog>
         },
         child: const Text('複製報告'),
       ),
-      if (_running) TextButton(onPressed: _stop, child: const Text('停止')),
+      if (_running)
+        TextButton(onPressed: () => _stop(), child: const Text('停止')),
       TextButton(
         onPressed: () => Navigator.pop(context),
         child: const Text('關閉'),

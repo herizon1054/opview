@@ -233,6 +233,76 @@ class ParkingApi {
     return http.Response.bytes(bytes, 200, headers: response.headers);
   }
 
+  // Normalize only recognized parking envelopes; never interpret an error
+  // object or an arbitrary nested array as an empty successful dataset.
+  Map<String, dynamic> _parkingEnvelope(dynamic data, String path) {
+    final on = path.contains('/OnStreet/');
+    final live = path.contains('Availability/');
+    final idField = on ? 'ParkingSegmentID' : 'CarParkID';
+    final named = live
+        ? 'ParkingAvailabilities'
+        : on
+        ? 'ParkingSegments'
+        : 'CarParks';
+    String shape(dynamic value) {
+      if (value is List) return 'JSON array(${value.length})';
+      if (value is Map) {
+        final keys = value.keys
+            .take(12)
+            .map(
+              (k) => k.toString().replaceAll(RegExp(r'[^A-Za-z0-9_@.]'), '?'),
+            );
+        return 'JSON object keys=${keys.join(",")}';
+      }
+      return value == null
+          ? 'JSON null'
+          : value is String
+          ? 'JSON string'
+          : 'JSON scalar';
+    }
+
+    final description = shape(data);
+    dynamic rows;
+    int? count;
+    String container = 'array';
+    if (data is List) {
+      rows = data;
+    } else if (data is Map) {
+      if (data.containsKey('error') || data.containsKey('Error')) {
+        throw ParkingApiError('TDX HTTP 200 錯誤物件；$description');
+      }
+      final keys = ['Items', 'items', named];
+      final present = keys.where(data.containsKey).toList();
+      if (present.length == 1) {
+        container = present.single;
+        rows = data[container];
+      }
+      final rawCount = data['Count'] ?? data['count'];
+      if (rawCount != null) {
+        if (rawCount is! int || rawCount < 0) {
+          throw ParkingApiError('TDX Count 格式異常；$description');
+        }
+        count = rawCount;
+      }
+    }
+    if (rows is! List) {
+      throw ParkingApiError('TDX HTTP 200 回應格式異常；$description；預期 $idField 清單');
+    }
+    if (rows.any(
+      (row) =>
+          row is! Map<String, dynamic> ||
+          row[idField] is! String ||
+          (row[idField] as String).isEmpty,
+    )) {
+      throw ParkingApiError('TDX 資料列缺少 $idField；$description/$container');
+    }
+    return {
+      'Items': rows,
+      if (count != null) 'Count': count,
+      '_shape': '$description/$container',
+    };
+  }
+
   Future<dynamic> _get(
     String path,
     Map<String, String> query,
@@ -257,7 +327,16 @@ class ParkingApi {
       Uri.https('tdx.transportdata.tw', path, query),
     );
     if (token.isNotEmpty) r.headers['Authorization'] = 'Bearer $token';
-    return jsonDecode(utf8.decode((await _send(r, gen)).bodyBytes));
+    final response = await _send(r, gen);
+    dynamic data;
+    try {
+      data = jsonDecode(utf8.decode(response.bodyBytes));
+    } on FormatException {
+      throw ParkingApiError(
+        'TDX HTTP 200 非有效 JSON（${response.bodyBytes.length} bytes）',
+      );
+    }
+    return _parkingEnvelope(data, path);
   }
 
   Future<String> _localGet(
@@ -352,7 +431,8 @@ class ParkingApi {
               throw ParkingApiError('回應格式異常');
             }
             final items = data['Items'] as List;
-            results[job.key] = items.isEmpty ? '成功／空資料' : '成功／取得樣本（非完整驗證）';
+            results[job.key] =
+                '${items.isEmpty ? '成功／空資料' : '成功／取得樣本（非完整驗證）'}；${data['_shape']}';
           } else {
             final body = await _localGet(
               job.city,

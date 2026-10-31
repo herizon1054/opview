@@ -285,6 +285,79 @@ final parkingCoreCases = <String, Future<void> Function()>{
     check(rows.values.contains('尚未測試'), 'others untested');
     check(!f.api.busy, 'released');
   },
+  'recognized parking envelopes work for static live and diagnostics':
+      () async {
+        for (final style in ['array', 'items', 'named']) {
+          final f = Fixture();
+          f.handler = (req) async {
+            final response = await f.normal(req);
+            if (req.method != 'GET' || req.url.host != 'tdx.transportdata.tw')
+              return response;
+            final decoded = jsonDecode(response.body) as Map;
+            final rows =
+                (int.tryParse(req.url.queryParameters[r'$skip'] ?? '0') ?? 0) >
+                    0
+                ? <dynamic>[]
+                : decoded['Items'];
+            final on = req.url.path.contains('/OnStreet/');
+            final live = req.url.path.contains('Availability/');
+            final key = style == 'items'
+                ? 'items'
+                : live
+                ? 'ParkingAvailabilities'
+                : on
+                ? 'ParkingSegments'
+                : 'CarParks';
+            return f.response(style == 'array' ? rows : {key: rows});
+          };
+          await f.download();
+          final q = await f.query();
+          check(
+            q.lots.any((e) => e.availability?.cars == 3),
+            '$style live parsed',
+          );
+          f.advance(61);
+          final results = await f.api.testCities(id: 'id', secret: 'secret');
+          check(
+            results.values.every((v) => !v.startsWith('失敗')),
+            '$style diagnostics',
+          );
+        }
+      },
+  'unknown HTTP200 object reports keys without payload or cache write':
+      () async {
+        final f = Fixture();
+        f.handler = (req) async => req.method == 'POST'
+            ? f.normal(req)
+            : f.response({'Unexpected': 'PRIVATE-VALUE'});
+        await fails(f.download(), 'keys=Unexpected');
+        check(
+          !f.values.keys.any((k) => k.startsWith('parking_static')),
+          'old cache retained',
+        );
+        f.advance(61);
+        final r = await f.api.testCities(id: 'id', secret: 'secret');
+        check(
+          !r.values.join().contains('PRIVATE-VALUE'),
+          'no response values logged',
+        );
+      },
+  'recognized envelope cannot hide HTTP200 error object': () async {
+    final f = Fixture();
+    f.handler = (req) async => req.method == 'POST'
+        ? f.normal(req)
+        : f.response({'error': 'denied', 'Items': []});
+    await fails(f.download(), '錯誤物件');
+  },
+  'array rows without parking IDs are not accepted': () async {
+    final f = Fixture();
+    f.handler = (req) async => req.method == 'POST'
+        ? f.normal(req)
+        : f.response([
+            {'Message': 'not parking'},
+          ]);
+    await fails(f.download(), '缺少 CarParkID');
+  },
   '30 seconds blocks double clicks without HTTP': () async {
     final f = Fixture();
     await f.download();

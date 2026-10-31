@@ -3,8 +3,8 @@ import 'package:opview/services/viewer_settings.dart';
 import 'package:opview/services/viewer_system.dart' as system;
 import 'package:opview/services/app_log.dart';
 import 'op_settings_link.dart';
+import 'parking_settings_dialog.dart';
 import 'package:opview/services/tdx_support.dart';
-import 'package:opview/services/line_notifications.dart';
 
 // 分享 / 清除 log 的結果文字（顯示在對話框底部）
 final _logResult = ValueNotifier<String?>(null);
@@ -30,6 +30,10 @@ class ViewerSettingsDialog extends StatelessWidget {
             ], onChanged: (v) { if (v != null) settings.setLayout(v); }),
           SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('公制 km/h'),
             value: settings.metric, onChanged: settings.setMetric),
+          ListTile(contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.local_parking), title: const Text('附近停車場與空位'),
+            subtitle: const Text('手機定位、TDX 金鑰與直向資訊區'),
+            onTap: () => showParkingSettings(context)),
           // 目前連線的 comma 分支沒有 tdx service：開關停用並註明
           if (tdxSupport.value == false)
             const SwitchListTile(contentPadding: EdgeInsets.zero, title: Text('TDX 路況顯示'),
@@ -40,14 +44,6 @@ class ViewerSettingsDialog extends StatelessWidget {
             SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('TDX 路況顯示'),
               subtitle: const Text('前方車速與路況事件跑馬燈（只影響手機端顯示）'),
               value: settings.tdx, onChanged: settings.setTdx),
-          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('顯示 LINE 通知（直向）'),
-            subtitle: const Text('直向畫面下方顯示 LINE 訊息，每則 30 秒；需授權「通知存取權」，訊息不會寫入 log'),
-            value: settings.lineNotify, onChanged: (v) async {
-              settings.setLineNotify(v);
-              if (v && !await hasNotificationAccess() && context.mounted) {
-                await _askNotificationAccess(context);
-              }
-            }),
           SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('打開 App 自動進入 opview'),
             subtitle: const Text('開啟後跳過主畫面，直接進入 opview 畫面'),
             value: settings.autoEnterOpview, onChanged: settings.setAutoEnterOpview),
@@ -92,10 +88,6 @@ class ViewerSettingsDialog extends StatelessWidget {
             OutlinedButton.icon(icon: const Icon(Icons.share, size: 18), label: const Text('分享 log'),
               onPressed: () async {
                 _logResult.value = '匯出中…';
-                // 開啟 LINE 通知時，分享前補一行目前的 LINE 診斷（只有數量與狀態，不含訊息內容）
-                if (LineNotifications.instance.enabled) {
-                  await LineNotifications.instance.logDiagnostics(force: true);
-                }
                 _logResult.value = await AppLog.instance.share();
               }),
             TextButton(child: const Text('清除 log'),
@@ -112,17 +104,3 @@ class ViewerSettingsDialog extends StatelessWidget {
     ),
   );
 }
-
-/// 尚未授權通知存取權：說明後開啟系統設定頁
-Future<void> _askNotificationAccess(BuildContext context) => showDialog<void>(context: context,
-  builder: (ctx) => AlertDialog(
-    title: const Text('需要通知存取權'),
-    content: const Text('opview 需要「通知存取權」才能讀取 LINE 通知。\n\n'
-      '請在接下來的系統設定中找到 opview 並開啟。\n'
-      '若開關無法開啟（Android 13 以上的側載 App），請先到「應用程式資訊 → opview → 右上角選單 → 允許受限制的設定」。'),
-    actions: [
-      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('稍後')),
-      FilledButton(onPressed: () { Navigator.pop(ctx); openNotificationAccessSettings(); },
-        child: const Text('前往設定')),
-    ],
-  ));

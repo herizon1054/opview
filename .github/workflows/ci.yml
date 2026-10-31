@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [20261027]
+    branches: [opview-general]
   pull_request:
-    branches: [20261027]
+    branches: [opview-general]
   workflow_dispatch:
 
 jobs:

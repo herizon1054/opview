@@ -22,7 +22,8 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
   final _startup = ParkingStartup.instance;
   bool _enabled = true, _ready = false, _saving = false;
   String _city = 'auto', _error = '';
-  int _radius = 10000;
+  int _radius = 1000;
+  bool _testMode = false;
 
   @override
   void initState() {
@@ -45,7 +46,7 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
         _secret.text = c.clientSecret;
         _enabled = c.enabled;
         _city = parkingCities.containsKey(c.city) ? c.city : 'auto';
-        _radius = c.radius;
+        _radius = c.radius == 1200 ? 1200 : 1000;
         _ready = true;
       });
     } catch (_) {
@@ -137,14 +138,30 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
                       if (v != null) setState(() => _city = v);
                     },
             ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('測試模式'),
+              subtitle: const Text('預設關閉；開啟後可選 10 km 與執行縣市端點測試'),
+              value: _testMode,
+              onChanged: !_ready || _saving
+                  ? null
+                  : (v) => setState(() {
+                      _testMode = v;
+                      if (!v && _radius == 10000) _radius = 1000;
+                    }),
+            ),
             DropdownButtonFormField<int>(
               initialValue: _radius,
               key: ValueKey(_radius),
               decoration: const InputDecoration(labelText: '搜尋半徑'),
-              items: const [
-                DropdownMenuItem(value: 1000, child: Text('1000 公尺')),
-                DropdownMenuItem(value: 1200, child: Text('1200 公尺')),
-                DropdownMenuItem(value: 10000, child: Text('10 km（測試用預設）')),
+              items: [
+                const DropdownMenuItem(value: 1000, child: Text('1000 公尺')),
+                const DropdownMenuItem(value: 1200, child: Text('1200 公尺')),
+                if (_testMode)
+                  const DropdownMenuItem(
+                    value: 10000,
+                    child: Text('10 km（僅測試）'),
+                  ),
               ],
               onChanged: _saving || !_ready
                   ? null
@@ -166,33 +183,35 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
             const SizedBox(height: 8),
             const Text('路外另接新北市／新竹市政府資料。新北「回報 N 位*」未附來源時間，請以現場為準。'),
             const SizedBox(height: 12),
-            const Text(
-              '縣市測試只抽查端點，不下載完整 TDX 清單、不修改七天快取。會消耗 API 額度；無總時間限制，依序測完所有已支援端點；認證或存取限制可能提前停止。',
-            ),
-            OutlinedButton(
-              onPressed: !_ready || _saving || _startup.busy
-                  ? null
-                  : () async {
-                      if (_id.text.trim().isEmpty ||
-                          _secret.text.trim().isEmpty) {
-                        setState(() => _error = '請先輸入完整 TDX 金鑰');
-                        return;
-                      }
-                      if (parkingApi.busy) {
-                        setState(() => _error = '請等待目前下載或查詢完成');
-                        return;
-                      }
-                      await showDialog<void>(
-                        context: context,
-                        barrierDismissible: false,
-                        builder: (_) => ParkingTestDialog(
-                          id: _id.text.trim(),
-                          secret: _secret.text.trim(),
-                        ),
-                      );
-                    },
-              child: const Text('開始各縣市完整測試'),
-            ),
+            if (_testMode)
+              const Text(
+                '縣市測試只抽查端點，不下載完整 TDX 清單、不修改七天快取。會消耗 API 額度；無總時間限制，依序測完所有已支援端點；認證或存取限制可能提前停止。',
+              ),
+            if (_testMode)
+              OutlinedButton(
+                onPressed: !_ready || _saving || _startup.busy
+                    ? null
+                    : () async {
+                        if (_id.text.trim().isEmpty ||
+                            _secret.text.trim().isEmpty) {
+                          setState(() => _error = '請先輸入完整 TDX 金鑰');
+                          return;
+                        }
+                        if (parkingApi.busy) {
+                          setState(() => _error = '請等待目前下載或查詢完成');
+                          return;
+                        }
+                        await showDialog<void>(
+                          context: context,
+                          barrierDismissible: false,
+                          builder: (_) => ParkingTestDialog(
+                            id: _id.text.trim(),
+                            secret: _secret.text.trim(),
+                          ),
+                        );
+                      },
+                child: const Text('開始各縣市完整測試'),
+              ),
             const SizedBox(height: 8),
             Text(
               _startup.status,

@@ -27,7 +27,7 @@ class _ParkingPanelState extends State<ParkingPanel>
   final _config = ParkingConfig.instance;
   Timer? _timer;
   bool _ready = false, _busy = false, _foreground = true, _clockBusy = false;
-  int _generation = 0, _remaining = 0, _radius = 10000;
+  int _generation = 0, _remaining = 0, _radius = 1000;
   String _message = '按下按鈕後查詢', _city = '';
   Position? _position;
   ParkingResult? _result;

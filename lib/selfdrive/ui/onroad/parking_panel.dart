@@ -203,7 +203,12 @@ class _ParkingPanelState extends State<ParkingPanel>
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, box) {
       final compact = box.maxHeight < 170;
-      final lots = _result?.lots ?? <ParkingLot>[];
+      // Keep off-street locations; roadside rows need a positive vacancy count.
+      // Match the display priority: cars first, then unclassified spaces.
+      final lots = (_result?.lots ?? <ParkingLot>[]).where((lot) {
+        final a = lot.availability;
+        return !lot.onStreet || ((a?.cars ?? a?.unclassified ?? 0) > 0);
+      }).toList();
       final now = DateTime.now();
       final mode = _config.hasCredentials ? 'TDX 會員' : '尚未設定金鑰';
       return Container(
@@ -284,9 +289,9 @@ class _ParkingPanelState extends State<ParkingPanel>
             if (!compact)
               Expanded(
                 child: lots.isEmpty
-                    ? const Center(
+                    ? Center(
                         child: Text(
-                          '路外停車場＋路邊智慧停車路段',
+                          _result == null ? '按上方按鈕查詢周遭車位' : '此範圍內無可顯示的停車資料',
                           style: TextStyle(fontSize: 12, color: Colors.white38),
                         ),
                       )

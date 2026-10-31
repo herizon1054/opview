@@ -287,7 +287,7 @@ final parkingCoreCases = <String, Future<void> Function()>{
   },
   'recognized parking envelopes work for static live and diagnostics':
       () async {
-        for (final style in ['array', 'items', 'named']) {
+        for (final style in ['array', 'items', 'named', 'deviceR14']) {
           final f = Fixture();
           f.handler = (req) async {
             final response = await f.normal(req);
@@ -301,7 +301,9 @@ final parkingCoreCases = <String, Future<void> Function()>{
                 : decoded['Items'];
             final on = req.url.path.contains('/OnStreet/');
             final live = req.url.path.contains('Availability/');
-            final key = style == 'items'
+            final key = style == 'deviceR14' && on && live
+                ? 'CurbParkingSegmentAvailabilities'
+                : style == 'items'
                 ? 'items'
                 : live
                 ? 'ParkingAvailabilities'
@@ -311,10 +313,15 @@ final parkingCoreCases = <String, Future<void> Function()>{
             return f.response(style == 'array' ? rows : {key: rows});
           };
           await f.download();
+          f.advance(61); // Four no-Count static pages must clear the shared gate.
           final q = await f.query();
           check(
             q.lots.any((e) => e.availability?.cars == 3),
             '$style live parsed',
+          );
+          check(
+            q.lots.any((e) => e.onStreet && e.availability?.cars == 7),
+            '$style roadside availability parsed',
           );
           f.advance(61);
           final results = await f.api.testCities(id: 'id', secret: 'secret');

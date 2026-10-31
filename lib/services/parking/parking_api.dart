@@ -271,7 +271,12 @@ class ParkingApi {
       if (data.containsKey('error') || data.containsKey('Error')) {
         throw ParkingApiError('TDX HTTP 200 錯誤物件；$description');
       }
-      final keys = ['Items', 'items', named];
+      final keys = [
+        'Items',
+        'items',
+        named,
+        if (on && live) 'CurbParkingSegmentAvailabilities',
+      ];
       final present = keys.where(data.containsKey).toList();
       if (present.length == 1) {
         container = present.single;

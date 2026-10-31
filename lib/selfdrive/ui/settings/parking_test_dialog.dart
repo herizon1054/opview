@@ -76,7 +76,7 @@ class _ParkingTestDialogState extends State<ParkingTestDialog>
   }
 
   String get _report =>
-      'R14 停車端點測試／${_watch.elapsed.inSeconds} 秒\n$_status\n'
+      'R15 停車端點測試／${_watch.elapsed.inSeconds} 秒\n$_status\n'
       'TDX 每端點最多取 1 筆樣本；不代表全縣市或即時空位正確。\n'
       '${_results.entries.map((e) => '${e.key}: ${e.value}').join('\n')}';
   @override

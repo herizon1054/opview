@@ -161,6 +161,8 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
               '空位仍須按「查詢周遭車位」，30 秒防連點。位置快取與 Token 會重用；靜態分頁與空位共用每分鐘 5 筆節流。',
             ),
             const SizedBox(height: 8),
+            const Text('路外另接新北市／新竹市政府資料。新北「回報 N 位*」未附來源時間，請以現場為準。'),
+            const SizedBox(height: 8),
             Text(
               _startup.status,
               style: const TextStyle(color: Colors.white70),

@@ -20,7 +20,15 @@ import 'parking_panel.dart';
 class PortraitPanel extends StatelessWidget {
   final UIState state;
   final bool stale;
-  const PortraitPanel({super.key, required this.state, this.stale = false});
+  // Compatibility with older hosts passing the LINE notification flag.
+  // This noline-based panel does not implement LINE notifications.
+  final bool lineEnabled;
+  const PortraitPanel({
+    super.key,
+    required this.state,
+    this.stale = false,
+    this.lineEnabled = false,
+  });
 
   // v20：TDX 字級 ×1.3
   static const double fontZoom = 1.3;

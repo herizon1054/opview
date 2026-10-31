@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 
 import 'parking_catalog.dart';
 import 'parking_model.dart';
+import 'parking_local.dart';
 import 'parking_quota.dart';
 
 class ParkingApiError implements Exception {
@@ -20,7 +21,8 @@ class ParkingApiError implements Exception {
 class ParkingStaticCache {
   final DateTime downloadedAt;
   final List<ParkingLot> lots;
-  ParkingStaticCache(this.downloadedAt, this.lots);
+  final bool localReady;
+  ParkingStaticCache(this.downloadedAt, this.lots, {this.localReady = false});
 }
 
 class ParkingResult {
@@ -95,7 +97,11 @@ class ParkingApi {
           .map((x) => ParkingLot.fromJson(Map<String, dynamic>.from(x as Map)))
           .toList();
       if (lots.any((x) => x.city != city)) return null;
-      return ParkingStaticCache(DateTime.parse(j['at'] as String), lots);
+      return ParkingStaticCache(
+        DateTime.parse(j['at'] as String),
+        lots,
+        localReady: j['localSchema'] == 1,
+      );
     } catch (_) {
       return null;
     }
@@ -175,8 +181,12 @@ class ParkingApi {
 
   Future<http.Response> _send(http.Request request, int gen) async {
     _check(gen);
+    final tdx = request.url.host == 'tdx.transportdata.tw';
+    final source = tdx ? 'TDX' : '地方政府';
     request.followRedirects = false;
-    request.headers['Accept'] = 'application/json';
+    request.headers['Accept'] = tdx
+        ? 'application/json'
+        : 'application/json, text/csv';
     request.headers['Accept-Encoding'] =
         'gzip'; // Native IOClient automatically decompresses.
     final response = await _client!
@@ -189,19 +199,20 @@ class ParkingApi {
       await gate.blockFor(
         Duration(seconds: seconds != null && seconds > 0 ? seconds : 60),
       );
-      throw ParkingApiError('TDX 頻率或額度受限，請稍後手動查詢；未自動重試', 429);
+      throw ParkingApiError('$source 頻率或額度受限，請稍後手動查詢；未自動重試', 429);
     }
     if (response.statusCode != 200) {
       await response.stream.listen((_) {}).cancel();
-      if (response.statusCode == 401) {
+      if (tdx && response.statusCode == 401) {
         _token = null;
         await writeSecret('parking_token_v3', '{}');
       }
       throw ParkingApiError(switch (response.statusCode) {
-        401 => 'TDX 認證失敗，請檢查 Client ID 與 Client Secret',
+        401 =>
+          tdx ? 'TDX 認證失敗，請檢查 Client ID 與 Client Secret' : '地方政府資料來源拒絕存取（401）',
         403 => '查詢失敗／IP鎖定：請確認 IP 或帳戶權限（403 不一定代表 IP 已鎖定）',
-        400 => 'TDX 不接受此查詢條件',
-        _ => 'TDX 暫時無法使用（${response.statusCode}）',
+        400 => '$source 不接受此查詢條件',
+        _ => '$source 暫時無法使用（${response.statusCode}）',
       }, response.statusCode);
     }
     final bytes = <int>[];
@@ -212,6 +223,12 @@ class ParkingApi {
       if (bytes.length + chunk.length > 8 * 1024 * 1024)
         throw ParkingApiError('單筆資料過大，已停止下載');
       bytes.addAll(chunk);
+    }
+    final text = utf8.decode(bytes).trimLeft();
+    if (text.startsWith('<') &&
+        (text.toLowerCase().contains('request rejected') ||
+            text.toLowerCase().contains('access denied'))) {
+      throw ParkingApiError('查詢失敗／IP鎖定：$source 拒絕存取，請確認 IP 或服務狀態');
     }
     return http.Response.bytes(bytes, 200, headers: response.headers);
   }
@@ -243,9 +260,36 @@ class ParkingApi {
     return jsonDecode(utf8.decode((await _send(r, gen)).bodyBytes));
   }
 
+  Future<String> _localGet(
+    String city,
+    int gen, {
+    required bool live,
+    void Function(String)? progress,
+  }) async {
+    while (true) {
+      _check(gen);
+      final delay = await gate.reserveData();
+      if (delay == 0) break;
+      if (live) throw ParkingGateError('本機每分鐘 5 筆節流，請稍後查詢');
+      progress?.call('地方位置下載節流等待 ${(delay / 1000).ceil()} 秒…');
+      await sleep(Duration(milliseconds: math.min(delay, 1000)));
+    }
+    final request = http.Request(
+      'GET',
+      Uri.parse(localParkingUrl(city, live: live)),
+    );
+    // Deliberately has no Authorization/header/body credentials.
+    return utf8.decode((await _send(request, gen)).bodyBytes);
+  }
+
   static const staticRefreshInterval = Duration(days: 7);
 
   Future<bool> staticUpdateDue(String city) async {
+    // One-time upgrade of the two city caches; do not pretend old TDX-only data includes local feeds.
+    if (localParkingCities.contains(city)) {
+      final existing = await cached(city);
+      if (existing == null || !existing.localReady) return true;
+    }
     final raw = await readSecret('parking_static_success_at_v6');
     DateTime? last;
     if (raw != null) {
@@ -258,8 +302,9 @@ class ParkingApi {
         if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(old)) {
           throw ParkingApiError('位置更新紀錄異常，已停止自動下載');
         }
-        last = DateTime.parse('${old}T00:00:00Z')
-            .add(const Duration(hours: 16));
+        last = DateTime.parse(
+          '${old}T00:00:00Z',
+        ).add(const Duration(hours: 16));
       }
     }
     if (last != null && clock().difference(last) < staticRefreshInterval)
@@ -335,6 +380,12 @@ class ParkingApi {
         if (skip > 100000) throw ParkingApiError('靜態資料筆數異常，舊快取保留');
       }
     }
+    var merged = lots.values.toList();
+    if (localParkingCities.contains(city)) {
+      progress?.call('下載${parkingCities[city]}地方政府停車場位置…');
+      final body = await _localGet(city, gen, live: false, progress: progress);
+      merged = mergeLocalParking(merged, localParkingLots(city, body));
+    }
     _check(gen);
     final at = clock();
     await writeCache(
@@ -344,7 +395,8 @@ class ParkingApi {
         'city': city,
         'complete': true,
         'at': at.toUtc().toIso8601String(),
-        'lots': lots.values.map((e) => e.toJson()).toList(),
+        'localSchema': localParkingCities.contains(city) ? 1 : 0,
+        'lots': merged.map((e) => e.toJson()).toList(),
       }),
     );
     // Count only after the complete cache has been committed successfully.
@@ -352,7 +404,11 @@ class ParkingApi {
       'parking_static_success_at_v6',
       at.toUtc().toIso8601String(),
     );
-    return ParkingStaticCache(at, lots.values.toList());
+    return ParkingStaticCache(
+      at,
+      merged,
+      localReady: localParkingCities.contains(city),
+    );
   });
 
   Future<ParkingResult> nearby({
@@ -390,14 +446,25 @@ class ParkingApi {
         .where(
           (on) =>
               (on ? onLiveCities : offLiveCities).contains(city) &&
-              candidates.any((e) => e.onStreet == on),
+              candidates.any((e) => e.onStreet == on && !e.isLocal),
         )
         .toList();
-    if (needed.isEmpty)
-      return ParkingResult(candidates, '此縣市的這類場地尚無 TDX 動態空位資料', clock());
-    final token = await _authorization(id.trim(), secret.trim(), gen);
+    final localGroup = candidates.where((e) => e.isLocal).toList();
+    if (needed.isEmpty && localGroup.isEmpty)
+      return ParkingResult(candidates, '此縣市的這類場地尚無動態空位資料', clock());
+    // Auth failures must not suppress an independent local feed.
+    final tokenFuture = needed.isEmpty
+        ? Future<String>.value('')
+        : _authorization(id.trim(), secret.trim(), gen);
+    // Attach the error handler immediately; each TDX group reports its own failure.
+    final safeToken = tokenFuture.then<Object>(
+      (v) => v,
+      onError: (Object e) => e,
+    );
     Future<String?> loadKind(bool on) async {
-      final group = candidates.where((e) => e.onStreet == on).toList();
+      final group = candidates
+          .where((e) => e.onStreet == on && !e.isLocal)
+          .toList();
       if (group.isEmpty) return null;
       if (!(on ? onLiveCities : offLiveCities).contains(city))
         return '${on ? '路邊' : '路外'}空位未提供';
@@ -406,6 +473,8 @@ class ParkingApi {
           .map((e) => "$idField eq '${e.id.replaceAll("'", "''")}'")
           .join(' or ');
       try {
+        final auth = await safeToken;
+        if (auth is! String) throw auth;
         final kind = on
             ? 'OnStreet/ParkingSegmentAvailability'
             : 'OffStreet/ParkingAvailability';
@@ -418,7 +487,7 @@ class ParkingApi {
             r'$top': '100',
             r'$format': 'JSON',
           },
-          token,
+          auth,
           gen,
         );
         if (data is! Map || data['Items'] is! List)
@@ -435,8 +504,28 @@ class ParkingApi {
       }
     }
 
-    // In normal single-city operation, at most two live GETs, concurrently.
-    final warnings = await Future.wait([loadKind(false), loadKind(true)]);
+    Future<String?> loadLocal() async {
+      if (localGroup.isEmpty) return null;
+      try {
+        final body = await _localGet(city, gen, live: true);
+        final values = localParkingAvailability(city, body, clock());
+        _check(gen);
+        for (final lot in localGroup) {
+          lot.availability = values[lot.id];
+        }
+        return city == 'NewTaipei' ? '*新北回報值未附來源時間；取得時間不代表現場更新時間' : null;
+      } catch (e) {
+        return e is ParkingApiError || e is ParkingGateError
+            ? e.toString()
+            : '地方政府空位更新失敗，請檢查網路或資料格式';
+      }
+    }
+
+    final warnings = await Future.wait([
+      loadKind(false),
+      loadKind(true),
+      loadLocal(),
+    ]);
     _check(gen);
     candidates.sort(
       (a, b) => parkingDistance(

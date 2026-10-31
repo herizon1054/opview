@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 
 import 'services/parking/parking_startup.dart';
+import 'services/parking/parking_system_ui.dart';
 
 import 'package:opview/selfdrive/ui/ui_state.dart';
 import 'package:opview/selfdrive/ui/onroad/augmented_road_view.dart';
@@ -173,8 +174,9 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
         builder: (context, pip, _) =>
             _SystemUiSync(onHome: _onHome, pip: pip, child: child!),
       ),
-      theme: ThemeData.dark(useMaterial3: true)
-          .copyWith(scaffoldBackgroundColor: Colors.black),
+      theme: ThemeData.dark(
+        useMaterial3: true,
+      ).copyWith(scaffoldBackgroundColor: Colors.black),
       home: !_ready
           ? const Scaffold(body: Center(child: CircularProgressIndicator()))
           : _onHome
@@ -230,7 +232,7 @@ class _SystemUiSync extends StatelessWidget {
     final portrait = size.height > size.width;
     final show = !pip && (onHome || portrait);
     WidgetsBinding.instance.addPostFrameCallback(
-      (_) => system.setStatusBarVisible(show),
+      (_) => setParkingAppStatusBarVisible(show),
     );
     return child;
   }

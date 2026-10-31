@@ -148,7 +148,7 @@ class _ParkingPanelState extends State<ParkingPanel>
       if (!current()) return;
       setState(() {
         _result = result;
-        _message = result.warning ?? 'TDX · 本次位置的直線距離 · 點右側箭頭導航';
+        _message = result.warning ?? '本次位置的直線距離 · 點右側箭頭導航';
       });
     } catch (e) {
       if (current())
@@ -303,7 +303,7 @@ class _ParkingPanelState extends State<ParkingPanel>
                             lot.lon,
                           ).round();
                           final label = a?.label(now) ?? '無空位資料';
-                          final t = a?.sourceTime?.toLocal();
+                          final t = (a?.sourceTime ?? a?.receivedAt)?.toLocal();
                           final time = t == null
                               ? '時間不明'
                               : '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
@@ -326,7 +326,7 @@ class _ParkingPanelState extends State<ParkingPanel>
                                         ),
                                       ),
                                       Text(
-                                        '$distance m · $time · ${lot.address}',
+                                        '${lot.sourceLabel} · $distance m · ${a?.sourceTime == null && a?.receivedAt != null ? '取得' : ''}$time · ${lot.address}',
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(

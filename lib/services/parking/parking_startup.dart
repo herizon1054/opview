@@ -77,7 +77,8 @@ class ParkingStartup extends ChangeNotifier {
     notifyListeners();
     try {
       // Global refresh guard can avoid GPS/geocoding entirely on repeated opens.
-      if (!await parkingApi.staticUpdateDue(_config.city)) {
+      if (_config.city != 'auto' &&
+          !await parkingApi.staticUpdateDue(_config.city)) {
         if (current()) status = '位置資料未滿 7 天，沿用快取';
         return;
       }

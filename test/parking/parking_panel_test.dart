@@ -25,7 +25,11 @@ void main() {
               child: SizedBox(
                 width: 390,
                 height: height,
-                child: PortraitPanel(state: UIState(), stale: true),
+                child: PortraitPanel(
+                  state: UIState(),
+                  stale: true,
+                  lineEnabled: true,
+                ),
               ),
             ),
           ),

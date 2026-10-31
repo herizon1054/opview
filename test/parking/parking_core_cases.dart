@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:opview/services/parking/parking_api.dart';
 import 'package:opview/services/parking/parking_model.dart';
+import 'package:opview/services/parking/parking_local.dart';
 import 'package:opview/services/parking/parking_quota.dart';
 
 void check(bool condition, String message) {
@@ -66,6 +67,30 @@ class Fixture {
     'DataCollectTime': now.toIso8601String(),
   };
   Future<http.Response> normal(http.Request r) async {
+    if (r.url.host == 'data.ntpc.gov.tw') {
+      final live = r.url.path.contains('e09b35a5');
+      return http.Response(
+        live
+            ? 'ID,AVAILABLECAR\r\n010001,8\r\n'
+            : 'ID,NAME,ADDRESS,TW97X,TW97Y,TOTALCAR\r\n010001,測試地方停車場,測試地址,250000,2765777,20\r\n',
+        200,
+        headers: {'content-type': 'text/csv; charset=utf-8'},
+      );
+    }
+    if (r.url.host == 'hispark.hccg.gov.tw') {
+      return response([
+        {
+          'PARKNO': '004',
+          'PARKINGNAME': '新竹測試場',
+          'ADDRESS': '測試路',
+          'LONGITUDE': '121',
+          'LATITUDE': '25',
+          'TOTALQUANTITY': 100,
+          'FREEQUANTITY': 12,
+          'UPDATETIME': now.toIso8601String(),
+        },
+      ]);
+    }
     if (r.method == 'POST')
       return response({'access_token': 'token', 'expires_in': 3600});
     final on = r.url.path.contains('/OnStreet/');
@@ -327,13 +352,20 @@ final parkingCoreCases = <String, Future<void> Function()>{
     await fails(result, '取消');
     check(f.requests.length <= 5, 'no retry');
   },
-  'New Taipei roadside is supported without offstreet request': () async {
+  'New Taipei local offstreet complements TDX roadside': () async {
     final f = Fixture();
     await f.download(city: 'NewTaipei');
     f.advance();
     final r = await f.query(city: 'NewTaipei');
-    check(f.requests.length == 3, 'token + static on + live on only');
-    check(r.lots.single.onStreet, 'roadside');
+    check(f.requests.length == 5, 'token + two static + two live');
+    check(
+      r.lots.any((e) => e.onStreet) && r.lots.any((e) => e.isLocal),
+      'both types',
+    );
+    check(
+      r.lots.firstWhere((e) => e.isLocal).availability?.cars == 8,
+      'local vacancy',
+    );
   },
   'stale or unknown source does not become a fresh vacancy': () async {
     final now = DateTime.utc(2026, 10, 31);
@@ -500,4 +532,224 @@ final parkingCoreCases = <String, Future<void> Function()>{
     await fails(f.download(), '認證失敗');
     check(f.requests.length == 1, 'no automatic retry');
   },
+  'local requests never receive TDX credentials': () async {
+    final f = Fixture();
+    await f.download(city: 'NewTaipei');
+    f.advance(61);
+    await f.query(city: 'NewTaipei');
+    final requests = f.requests.where(
+      (r) => r.url.host != 'tdx.transportdata.tw',
+    );
+    check(requests.length == 2, 'one static and one live local request');
+    check(
+      requests.every(
+        (r) => !r.headers.containsKey('Authorization') && r.body.isEmpty,
+      ),
+      'no secret leak',
+    );
+  },
+  'local 200 HTML rejection retains TDX roadside result': () async {
+    final f = Fixture();
+    await f.download(city: 'NewTaipei');
+    f.advance(61);
+    f.handler = (r) async => r.url.host == 'data.ntpc.gov.tw'
+        ? http.Response('<html>Request Rejected</html>', 200)
+        : f.normal(r);
+    final result = await f.query(city: 'NewTaipei');
+    check(result.warning?.contains('IP鎖定') == true, 'WAF rejection displayed');
+    check(
+      result.lots.firstWhere((e) => e.onStreet).availability?.cars == 7,
+      'TDX retained',
+    );
+    check(
+      result.lots.firstWhere((e) => e.isLocal).availability == null,
+      'failed local not zero',
+    );
+  },
+  'TDX authentication failure does not suppress local vacancies': () async {
+    final f = Fixture();
+    await f.download(city: 'NewTaipei');
+    f.advance(3601);
+    f.handler = (r) async =>
+        r.method == 'POST' ? f.response({}, 401) : f.normal(r);
+    final result = await f.query(city: 'NewTaipei');
+    check(result.warning?.contains('認證失敗') == true, 'auth warning');
+    check(
+      result.lots.firstWhere((e) => e.isLocal).availability?.cars == 8,
+      'independent local success',
+    );
+  },
+  'Hsinchu live lookup does not refresh an unnecessary TDX token': () async {
+    final f = Fixture();
+    await f.download(city: 'Hsinchu');
+    f.advance(3601);
+    final before = f.requests.where((r) => r.method == 'POST').length;
+    final result = await f.query(city: 'Hsinchu');
+    check(
+      f.requests.where((r) => r.method == 'POST').length == before,
+      'no token for local-only live',
+    );
+    check(
+      result.lots.firstWhere((e) => e.isLocal).availability?.cars == 12,
+      'Hsinchu count',
+    );
+  },
+  'NTPC negative counts stay unknown and missing times are explicit': () async {
+    final now = DateTime.utc(2026, 10, 31);
+    final values = localParkingAvailability(
+      'NewTaipei',
+      'ID,AVAILABLECAR\n001,-9\n002,0\n003,15\n',
+      now,
+    );
+    check(values['local:ntpc:001']!.label(now) == '無空位資料', 'negative sentinel');
+    check(values['local:ntpc:002']!.label(now) == '回報 0 位*', 'known zero');
+    check(
+      values['local:ntpc:003']!.sourceTime == null &&
+          !values['local:ntpc:003']!.fresh(now),
+      'do not forge timestamp',
+    );
+    check(
+      values['local:ntpc:003']!.label(now.add(const Duration(minutes: 6))) ==
+          '資料過期',
+      'retrieval expiry',
+    );
+  },
+  'Hsinchu timezone and stale timestamps are respected': () async {
+    final row = {
+      'PARKNO': '004',
+      'FREEQUANTITY': 12,
+      'TOTALQUANTITY': 20,
+      'UPDATETIME': '2026-10-31T12:00:00',
+    };
+    final a = localParkingAvailability(
+      'Hsinchu',
+      jsonEncode([row]),
+      DateTime.utc(2026, 10, 31, 4),
+    )['local:hccg:004']!;
+    check(
+      a.sourceTime == DateTime.utc(2026, 10, 31, 4),
+      'Taiwan +08 timestamp',
+    );
+    check(a.label(DateTime.utc(2026, 10, 31, 4, 6)) == '資料過期', 'source stale');
+  },
+  'local CSV handles commas and newlines without destroying IDs': () async {
+    final lots = localParkingLots(
+      'NewTaipei',
+      '\uFEFFID,NAME,ADDRESS,TW97X,TW97Y,TOTALCAR\r\n010001,"場,一","路\r\n段",250000,2765777,20\r\n',
+    );
+    check(
+      lots.single.id == 'local:ntpc:010001' && lots.single.name == '場,一',
+      'leading zero and quotes',
+    );
+    check(lots.single.address == '路\n段', 'embedded newline');
+    check(
+      ParkingLot.fromJson(lots.single.toJson()).sourceLabel == '新北市政府',
+      'source persists',
+    );
+  },
+  'local duplicate merging requires matching name and nearby position':
+      () async {
+        final a = ParkingLot('tdx1', 'Hsinchu', '測試停車場', '', 25, 121);
+        final b = ParkingLot('tdx2', 'Hsinchu', '另一個停車場', '', 25, 121);
+        final c = ParkingLot(
+          'local:hccg:1',
+          'Hsinchu',
+          '測試停車場',
+          '',
+          25.0001,
+          121,
+        );
+        final result = mergeLocalParking([a, b], [c]);
+        check(
+          result.length == 2 && !result.contains(a) && result.contains(b),
+          'conservative dedupe',
+        );
+      },
+  'local static download failure preserves complete old cache': () async {
+    final f = Fixture();
+    await f.download(city: 'NewTaipei');
+    final old = f.values['parking_static_v3_NewTaipei'];
+    f.advance(7 * 86400);
+    f.handler = (r) async =>
+        r.url.host == 'data.ntpc.gov.tw' ? f.response({}, 503) : f.normal(r);
+    await fails(f.download(city: 'NewTaipei'), '503');
+    check(
+      f.values['parking_static_v3_NewTaipei'] == old,
+      'atomic complete cache',
+    );
+    check(
+      await f.api.staticUpdateDue('NewTaipei'),
+      'failure remains retryable',
+    );
+  },
+  'TWD97 coordinates match independent PROJ reference': () async {
+    final p = twd97ToWgs84(296882, 2767068)!;
+    check(
+      (p.$1 - 25.010925151488685).abs() < 0.000001 &&
+          (p.$2 - 121.46449194269124).abs() < 0.000001,
+      'EPSG3826 conversion',
+    );
+    check(twd97ToWgs84(315148.7, 25.22236) == null, 'mixed units rejected');
+    check(twd97ToWgs84(0, 0) == null, 'missing coordinates rejected');
+  },
+  'identical local IDs collapse and conflicting IDs are excluded': () async {
+    const header = 'ID,NAME,ADDRESS,TW97X,TW97Y,TOTALCAR\n';
+    final lots = localParkingLots(
+      'NewTaipei',
+      header +
+          '001,場一,路一,250000,2765777,10\n001,場一,不同地址文字,250000,2765777,10\n' +
+          '002,場二,路二,250000,2765777,10\n002,別場,路三,250000,2765777,10\n',
+    );
+    check(
+      lots.length == 1 && lots.single.id == 'local:ntpc:001',
+      'no ambiguous ID joins',
+    );
+    final counts = localParkingAvailability(
+      'NewTaipei',
+      'ID,AVAILABLECAR\n001,3\n001,3\n002,8\n002,9\n',
+      DateTime.now(),
+    );
+    check(
+      counts.length == 1 && counts['local:ntpc:001']!.cars == 3,
+      'conflicting counts omitted',
+    );
+  },
+  'TDX-only old city cache is upgraded once then kept seven days': () async {
+    final f = Fixture();
+    await f.download(city: 'NewTaipei');
+    final j = jsonDecode(f.values['parking_static_v3_NewTaipei']!) as Map;
+    j.remove('localSchema');
+    f.values['parking_static_v3_NewTaipei'] = jsonEncode(j);
+    check(
+      await f.api.staticUpdateDue('NewTaipei'),
+      'needs local schema migration',
+    );
+    f.advance(61);
+    await f.download(city: 'NewTaipei');
+    check(!await f.api.staticUpdateDue('NewTaipei'), 'new cache is reusable');
+    f.advance(7 * 86400);
+    check(await f.api.staticUpdateDue('NewTaipei'), 'seven days expires');
+  },
+  'cancelled local download cannot overwrite old cache or count success':
+      () async {
+        final f = Fixture();
+        final started = Completer<void>(), finish = Completer<void>();
+        f.handler = (r) async {
+          if (r.url.host == 'data.ntpc.gov.tw') {
+            started.complete();
+            await finish.future;
+          }
+          return f.normal(r);
+        };
+        final result = f.download(city: 'NewTaipei');
+        await started.future;
+        f.api.cancel();
+        finish.complete();
+        await fails(result, '取消');
+        check(
+          f.values['parking_static_v3_NewTaipei'] == null,
+          'no partial cache',
+        );
+        check(f.values['parking_static_success_at_v6'] == null, 'not success');
+      },
 };

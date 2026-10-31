@@ -34,6 +34,12 @@ class ParkingLot {
     this.lon, {
     this.onStreet = false,
   });
+  bool get isLocal => id.startsWith('local:');
+  String get sourceLabel => id.startsWith('local:ntpc:')
+      ? '新北市政府'
+      : id.startsWith('local:hccg:')
+      ? '新竹市政府'
+      : 'TDX';
   String get key => '$city/${onStreet ? 'on' : 'off'}/$id';
 
   Map<String, dynamic> toJson() => {
@@ -91,13 +97,16 @@ class ParkingLot {
 
 class ParkingAvailability {
   final int? cars, unclassified, serviceStatus;
-  final DateTime? sourceTime;
+  final DateTime? sourceTime, receivedAt;
+  final bool reportWithoutTime;
   ParkingAvailability(
     this.cars,
     this.unclassified,
     this.serviceStatus,
-    this.sourceTime,
-  );
+    this.sourceTime, {
+    this.receivedAt,
+    this.reportWithoutTime = false,
+  });
 
   factory ParkingAvailability.parse(Map<String, dynamic> data) {
     final list = data['Availabilities'];
@@ -130,6 +139,13 @@ class ParkingAvailability {
       now.difference(sourceTime!).inSeconds <= 300;
 
   String label(DateTime now) {
+    if (reportWithoutTime && sourceTime == null) {
+      if (receivedAt == null ||
+          now.difference(receivedAt!).inSeconds < -60 ||
+          now.difference(receivedAt!).inSeconds > 300)
+        return '資料過期';
+      return cars == null ? '無空位資料' : '回報 $cars 位*';
+    }
     if (!fresh(now)) return sourceTime == null ? '時間不明' : '資料過期';
     if (serviceStatus != null && serviceStatus != 1) return '非營業中';
     if (cars != null) return cars == 0 ? '汽車已滿' : '汽車 $cars 位';

@@ -1,6 +1,6 @@
-# Opview 停車查詢 R9：加入地方政府路外資料
+# Opview 停車查詢 R10：加入地方政府路外資料
 
-原始碼覆蓋包，不是 APK。可覆蓋原始 opview-noline 或 R1–R8；依相對路徑覆蓋專案根目錄，執行 flutter pub get，再重新編譯。新增 csv 依賴；pubspec.lock 未重新產生。無需刪除檔案。
+原始碼覆蓋包，不是 APK。可覆蓋原始 opview-noline 或 R1–R9；依相對路徑覆蓋專案根目錄，執行 flutter pub get，再重新編譯。新增 csv 依賴；pubspec.lock 未重新產生。無需刪除檔案。
 
 ## 本版新增
 
@@ -50,3 +50,22 @@
 - Dart formatter 已解析修改檔，檔案／符號與封裝檢查通過；44 項停車核心檢查仍通過。未完成使用者混合分支的全量 Flutter build，附帶的 Widget 測試未執行。
 
 請將整包依原路徑覆蓋，執行 flutter pub get，然後重新 flutter build apk --release。不要只替換 app.dart 而漏掉新增的 parking_system_ui.dart。
+
+## R10：Android AAR 建置版本修正
+
+- android/settings.gradle：AGP 8.7.0 → 8.10.1，滿足 androidx.browser 1.9.0、androidx.core/core-ktx 1.17.0 要求的 AGP >= 8.9.1。
+- 明確附上 android/gradle/wrapper/gradle-wrapper.properties（Gradle 8.14.3），以及 android/app/build.gradle（compileSdk 36）。
+- 建置環境使用 JDK 17；現有 CI 已設定。Java/Kotlin 程式碼目標仍為 11，不必改成 17。
+- 保留 Kotlin plugin 2.1.0、minSdk 21、targetSdk 34；本次未變更通知或停車行為。
+- 官方相容資訊：https://developer.android.com/build/releases/agp-8-10-0-release-notes
+- 已核對覆蓋包版本設定及 ZIP 校驗；本環境未執行完整 Flutter APK 建置，需以 CI 結果確認。
+
+覆蓋專案根目錄後，提交 android/ 下的變更再重新執行 CI；本機可執行：
+
+```sh
+flutter clean
+flutter pub get
+flutter build apk --release
+```
+
+如果錯誤仍顯示 AGP 8.7.0，表示此次建置尚未使用更新後的 android/settings.gradle，請確認 CI 建置的分支與 commit。

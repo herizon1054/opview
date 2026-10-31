@@ -264,13 +264,14 @@ class ParkingApi {
     String city,
     int gen, {
     required bool live,
+    bool waitForSlot = false,
     void Function(String)? progress,
   }) async {
     while (true) {
       _check(gen);
       final delay = await gate.reserveData();
       if (delay == 0) break;
-      if (live) throw ParkingGateError('本機每分鐘 5 筆節流，請稍後查詢');
+      if (live && !waitForSlot) throw ParkingGateError('本機每分鐘 5 筆節流，請稍後查詢');
       progress?.call('地方位置下載節流等待 ${(delay / 1000).ceil()} 秒…');
       await sleep(Duration(milliseconds: math.min(delay, 1000)));
     }
@@ -281,6 +282,122 @@ class ParkingApi {
     // Deliberately has no Authorization/header/body credentials.
     return utf8.decode((await _send(request, gen)).bodyBytes);
   }
+
+  /// Samples supported endpoints without modifying location caches or refresh dates.
+  Future<Map<String, String>> testCities({
+    required String id,
+    required String secret,
+    void Function(Map<String, String>)? report,
+    void Function(String)? progress,
+  }) => _operation((gen) async {
+    _credentials(id, secret);
+    final results = <String, String>{};
+    final jobs = <({String key, String city, String? path, bool live})>[];
+    for (final city in parkingCities.keys) {
+      final kinds = [
+        ('路外位置', 'OffStreet/CarPark', offStaticCities, false),
+        ('路外空位', 'OffStreet/ParkingAvailability', offLiveCities, true),
+        ('路邊位置', 'OnStreet/ParkingSegment', onStaticCities, false),
+        ('路邊空位', 'OnStreet/ParkingSegmentAvailability', onLiveCities, true),
+      ];
+      for (final kind in kinds) {
+        final key = '${parkingCities[city]} TDX ${kind.$1}';
+        final supported = kind.$3.contains(city);
+        results[key] = supported ? '尚未測試' : '未列入支援';
+        if (supported)
+          jobs.add((
+            key: key,
+            city: city,
+            path: '/api/basic/v1/Parking/${kind.$2}/City/$city',
+            live: kind.$4,
+          ));
+      }
+      if (localParkingCities.contains(city)) {
+        for (final live in [false, true]) {
+          final key = '${parkingCities[city]} 地方${live ? '空位' : '位置'}';
+          results[key] = '尚未測試';
+          jobs.add((key: key, city: city, path: null, live: live));
+        }
+      }
+    }
+    void emit() => report?.call(Map<String, String>.unmodifiable(results));
+    // No overall time limit: complete every supported job unless cancelled
+    // or blocked by authentication/access/rate limits.
+    void tick(String message) {
+      _check(gen);
+      progress?.call(
+        message.replaceAll('靜態下載', '測試').replaceAll('地方位置下載', '測試'),
+      );
+    }
+
+    emit();
+    try {
+      tick('取得測試認證…');
+      final token = await _authorization(id.trim(), secret.trim(), gen);
+      for (final job in jobs) {
+        tick(job.key);
+        results[job.key] = '測試中';
+        emit();
+        try {
+          if (job.path != null) {
+            final data = await _get(
+              job.path!,
+              {r'$format': 'JSON', r'$top': '1'},
+              token,
+              gen,
+              waitForSlot: true,
+              progress: tick,
+            );
+            if (data is! Map || data['Items'] is! List) {
+              throw ParkingApiError('回應格式異常');
+            }
+            final items = data['Items'] as List;
+            results[job.key] = items.isEmpty ? '成功／空資料' : '成功／取得樣本（非完整驗證）';
+          } else {
+            final body = await _localGet(
+              job.city,
+              gen,
+              live: job.live,
+              waitForSlot: true,
+              progress: tick,
+            );
+            final count = job.live
+                ? localParkingAvailability(job.city, body, clock()).length
+                : localParkingLots(job.city, body).length;
+            results[job.key] = '成功／解析 $count 筆';
+          }
+          _check(gen);
+        } catch (e) {
+          if (gen != _generation) {
+            results[job.key] = '未完成／已停止';
+            rethrow;
+          }
+          results[job.key] = e is ParkingApiError
+              ? '失敗／${e.message}'
+              : '失敗／連線或解析異常';
+          if (e is ParkingApiError &&
+              const [401, 403, 429].contains(e.status)) {
+            emit();
+            progress?.call('測試停止：認證、存取或頻率限制；未繼續請求其他縣市');
+            return results;
+          }
+        }
+        emit();
+      }
+      progress?.call('全部端點測試完成');
+    } catch (e) {
+      progress?.call(
+        gen != _generation
+            ? '測試已停止'
+            : e is ParkingApiError
+            ? '測試無法開始：${e.message}'
+            : '測試無法開始：認證或連線失敗',
+      );
+    } finally {
+      emit();
+    }
+    return results;
+  });
 
   static const staticRefreshInterval = Duration(days: 7);
 
@@ -326,8 +443,8 @@ class ParkingApi {
     if (!await staticUpdateDue(city)) {
       throw ParkingApiError('位置資料距上次成功更新未滿 7 天');
     }
-    _check(gen);
-    await gate.beginClick();
+    // Automatic static updates are not manual vacancy clicks. Each data
+    // request still respects reserveData() and server Retry-After limits.
     _check(gen);
     final token = await _authorization(id.trim(), secret.trim(), gen);
     final lots = <String, ParkingLot>{};

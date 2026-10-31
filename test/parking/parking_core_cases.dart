@@ -189,6 +189,102 @@ final parkingCoreCases = <String, Future<void> Function()>{
     check(!r.lots[0].onStreet && r.lots[1].onStreet, 'near before far');
     check(r.lots[0].key != r.lots[1].key, 'namespaced keys');
   },
+  'static update ignores manual click cooldown without extending it': () async {
+    final f = Fixture();
+    await f.gate.beginClick();
+    f.advance(25);
+    check(await f.gate.remaining() == 5, 'reproduce screenshot');
+    final cache = await f.download(city: 'Kaohsiung');
+    check(cache.lots.isNotEmpty, 'static update must complete');
+    check(await f.gate.remaining() == 5, 'static must not reset cooldown');
+  },
+  'static update does not block first vacancy query': () async {
+    final f = Fixture();
+    await f.download();
+    check(await f.gate.remaining() == 0, 'no manual cooldown from startup');
+    final result = await f.query();
+    check(result.lots.isNotEmpty, 'query immediately after static update');
+    check(await f.gate.remaining() == 30, 'live query still has cooldown');
+  },
+  'diagnostics sample all supported endpoints without modifying caches':
+      () async {
+        final f = Fixture();
+        final r = await f.api.testCities(id: 'id', secret: 'secret');
+        check(!r.values.contains('尚未測試'), 'all supported probes completed');
+        check(r.values.any((s) => s == '未列入支援'), 'unsupported distinct');
+        check(
+          r.values.every((s) => !s.startsWith('失敗')),
+          'mock endpoints pass',
+        );
+        check(
+          !f.values.keys.any((k) => k.startsWith('parking_static')),
+          'no cache/success writes',
+        );
+        check(await f.gate.remaining() == 0, 'no manual click cooldown');
+        for (final req in f.requests.where(
+          (r) => r.method == 'GET' && r.url.host == 'tdx.transportdata.tw',
+        )) {
+          check(req.url.queryParameters[r'$top'] == '1', 'sample only');
+        }
+      },
+  'diagnostics default completes beyond ten minutes': () async {
+    final f = Fixture();
+    final started = f.now;
+    final r = await f.api.testCities(id: 'id', secret: 'secret');
+    check(
+      f.now.difference(started) > const Duration(minutes: 10),
+      'cross old deadline',
+    );
+    check(
+      !r.values.contains('尚未測試') && !r.values.contains('測試中'),
+      'all jobs completed',
+    );
+    check(
+      f.requests.where((r) => r.method == 'GET').length == 57,
+      'all 57 endpoints',
+    );
+    check(!f.api.busy, 'operation released');
+  },
+  'diagnostics stop on forbidden rather than hit every city': () async {
+    final f = Fixture();
+    f.handler = (r) async =>
+        r.method == 'POST' ? f.normal(r) : f.response({}, 403);
+    final r = await f.api.testCities(id: 'id', secret: 'secret');
+    check(f.requests.length == 2, 'auth plus first forbidden request only');
+    check(r.values.any((s) => s.contains('IP鎖定')), 'show refusal');
+    check(r.values.contains('尚未測試'), 'others untested');
+  },
+  '10km includes a distant lot excluded by 1200m': () async {
+    final f = Fixture();
+    f.handler = (r) async {
+      if (r.method == 'GET' && r.url.path.contains('/CarPark/')) {
+        return f.response({
+          'Items': [f.staticRow('same', false, lat: 25.045)],
+          'Count': 1,
+        });
+      }
+      return f.normal(r);
+    };
+    await f.download();
+    final near = await f.query(radius: 1200);
+    check(near.lots.every((e) => e.onStreet), 'distant offstreet excluded');
+    f.advance(61);
+    final far = await f.query(radius: 10000);
+    check(far.lots.any((e) => !e.onStreet), '5km offstreet included');
+  },
+  'diagnostics cancellation does not continue later endpoints': () async {
+    final f = Fixture();
+    f.handler = (r) async {
+      final response = await f.normal(r);
+      if (r.method == 'GET') f.api.cancel();
+      return response;
+    };
+    final rows = await f.api.testCities(id: 'id', secret: 'secret');
+    check(f.requests.length == 2, 'no subsequent request');
+    check(rows.values.any((v) => v.contains('已停止')), 'cancelled active row');
+    check(rows.values.contains('尚未測試'), 'others untested');
+    check(!f.api.busy, 'released');
+  },
   '30 seconds blocks double clicks without HTTP': () async {
     final f = Fixture();
     await f.download();

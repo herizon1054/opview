@@ -13,11 +13,18 @@ class ParkingStartup extends ChangeNotifier {
   bool busy = false;
   bool _started = false, _foreground = true, _pending = false;
   int _generation = 0;
-  String status = '開啟 App 時檢查位置更新';
+  String _status = '開啟 App 時檢查位置更新';
+  String get status => _status;
+  set status(String value) {
+    _status = value;
+    // Log status only: never credentials, tokens, or device coordinates.
+    debugPrint('[parking] $value');
+  }
 
   Future<void> start() async {
     if (_started) return;
     _started = true;
+    _foreground = true;
     try {
       await _config.load();
       if (!_started) return;
@@ -40,7 +47,11 @@ class ParkingStartup extends ChangeNotifier {
   }
 
   void foreground(bool value) {
+    // inactive -> resumed (dialogs/notification shade) is not a new launch.
+    // hidden -> paused is also only one transition into the background.
+    if (_foreground == value) return;
     _foreground = value;
+    debugPrint('[parking] foreground=$value');
     if (!value) {
       _generation++;
       if (busy) parkingApi.cancel();

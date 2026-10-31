@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../../services/parking/parking_catalog.dart';
 import '../../../services/parking/parking_config.dart';
 import '../../../services/parking/parking_startup.dart';
+import '../../../services/parking/parking_quota_store.dart';
+import 'parking_test_dialog.dart';
 
 Future<void> showParkingSettings(BuildContext context) => showDialog<void>(
   context: context,
@@ -20,7 +22,7 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
   final _startup = ParkingStartup.instance;
   bool _enabled = true, _ready = false, _saving = false;
   String _city = 'auto', _error = '';
-  int _radius = 1000;
+  int _radius = 10000;
 
   @override
   void initState() {
@@ -142,6 +144,7 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
               items: const [
                 DropdownMenuItem(value: 1000, child: Text('1000 公尺')),
                 DropdownMenuItem(value: 1200, child: Text('1200 公尺')),
+                DropdownMenuItem(value: 10000, child: Text('10 km（測試用預設）')),
               ],
               onChanged: _saving || !_ready
                   ? null
@@ -162,6 +165,34 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
             ),
             const SizedBox(height: 8),
             const Text('路外另接新北市／新竹市政府資料。新北「回報 N 位*」未附來源時間，請以現場為準。'),
+            const SizedBox(height: 12),
+            const Text(
+              '縣市測試只抽查端點，不下載完整 TDX 清單、不修改七天快取。會消耗 API 額度；無總時間限制，依序測完所有已支援端點；認證或存取限制可能提前停止。',
+            ),
+            OutlinedButton(
+              onPressed: !_ready || _saving || _startup.busy
+                  ? null
+                  : () async {
+                      if (_id.text.trim().isEmpty ||
+                          _secret.text.trim().isEmpty) {
+                        setState(() => _error = '請先輸入完整 TDX 金鑰');
+                        return;
+                      }
+                      if (parkingApi.busy) {
+                        setState(() => _error = '請等待目前下載或查詢完成');
+                        return;
+                      }
+                      await showDialog<void>(
+                        context: context,
+                        barrierDismissible: false,
+                        builder: (_) => ParkingTestDialog(
+                          id: _id.text.trim(),
+                          secret: _secret.text.trim(),
+                        ),
+                      );
+                    },
+              child: const Text('開始各縣市完整測試'),
+            ),
             const SizedBox(height: 8),
             Text(
               _startup.status,

@@ -8,7 +8,7 @@ class ParkingConfig extends ChangeNotifier {
   static const _storage = FlutterSecureStorage();
   bool enabled = true;
   String city = 'auto';
-  int radius = 1000;
+  int radius = 10000;
   String clientId = '', clientSecret = '';
   bool get hasCredentials =>
       clientId.trim().isNotEmpty && clientSecret.trim().isNotEmpty;
@@ -25,7 +25,11 @@ class ParkingConfig extends ChangeNotifier {
     clientId = data['id'] as String? ?? '';
     clientSecret = data['secret'] as String? ?? '';
     city = data['city'] as String? ?? 'auto';
-    radius = data['radius'] == 1200 ? 1200 : 1000;
+    radius =
+        data['radiusTestV1'] == true &&
+            const [1000, 1200, 10000].contains(data['radius'])
+        ? data['radius'] as int
+        : 10000;
     notifyListeners();
   }
 
@@ -34,13 +38,13 @@ class ParkingConfig extends ChangeNotifier {
     String id,
     String secret, {
     String selectedCity = 'auto',
-    int selectedRadius = 1000,
+    int selectedRadius = 10000,
   }) async {
     if (on && (id.trim().isEmpty || secret.trim().isEmpty)) {
       throw StateError('啟用停車功能必須填入 Client ID 與 Client Secret');
     }
-    if (selectedRadius != 1000 && selectedRadius != 1200) {
-      throw ArgumentError('搜尋範圍僅支援 1000 或 1200 公尺');
+    if (!const [1000, 1200, 10000].contains(selectedRadius)) {
+      throw ArgumentError('搜尋範圍僅支援 1000、1200 或 10000 公尺');
     }
     await _storage.write(
       key: 'opview_parking_config_v1',
@@ -50,6 +54,7 @@ class ParkingConfig extends ChangeNotifier {
         'secret': secret.trim(),
         'city': selectedCity,
         'radius': selectedRadius,
+        'radiusTestV1': true,
       }),
     );
     enabled = on;

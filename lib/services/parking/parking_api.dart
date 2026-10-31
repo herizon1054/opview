@@ -1,0 +1,749 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math' as math;
+
+import 'package:crypto/crypto.dart';
+import 'package:http/http.dart' as http;
+
+import 'parking_catalog.dart';
+import 'parking_model.dart';
+import 'parking_local.dart';
+import 'parking_quota.dart';
+
+class ParkingApiError implements Exception {
+  final String message;
+  final int? status;
+  ParkingApiError(this.message, [this.status]);
+  @override
+  String toString() => message;
+}
+
+class ParkingStaticCache {
+  final DateTime downloadedAt;
+  final List<ParkingLot> lots;
+  final bool localReady;
+  ParkingStaticCache(this.downloadedAt, this.lots, {this.localReady = false});
+}
+
+class ParkingResult {
+  final List<ParkingLot> lots;
+  final String? warning;
+  final DateTime fetchedAt;
+  ParkingResult(this.lots, this.warning, this.fetchedAt);
+}
+
+/// Only basic endpoints. One live GET per supported kind, no advanced NearBy.
+class ParkingApi {
+  final ParkingRequestGate gate;
+  final Future<String?> Function(String) readCache, readSecret;
+  final Future<void> Function(String, String) writeCache, writeSecret;
+  final http.Client Function() clientFactory;
+  final DateTime Function() clock;
+  final Future<void> Function(Duration) sleep;
+  http.Client? _client;
+  int _generation = 0;
+  bool _busy = false;
+  Future<String>? _tokenFlight;
+  Map<String, dynamic>? _token;
+  ParkingApi({
+    required this.gate,
+    required this.readCache,
+    required this.writeCache,
+    required this.readSecret,
+    required this.writeSecret,
+    http.Client Function()? clientFactory,
+    DateTime Function()? clock,
+    Future<void> Function(Duration)? sleep,
+  }) : clientFactory = clientFactory ?? http.Client.new,
+       clock = clock ?? DateTime.now,
+       sleep = sleep ?? Future<void>.delayed;
+  bool get busy => _busy;
+  void cancel() {
+    _generation++;
+    _client?.close();
+  }
+
+  void _check(int gen) {
+    if (gen != _generation) throw ParkingApiError('查詢已取消');
+  }
+
+  Future<T> _operation<T>(Future<T> Function(int) body) async {
+    if (_busy) throw ParkingApiError('已有查詢或下載進行中');
+    _busy = true;
+    final gen = _generation;
+    _client = clientFactory();
+    try {
+      return await body(gen);
+    } finally {
+      _client?.close();
+      _client = null;
+      _busy = false;
+    }
+  }
+
+  void _credentials(String id, String secret) {
+    if (id.trim().isEmpty || secret.trim().isEmpty)
+      throw ParkingApiError('必須填入 Client ID 與 Client Secret 才能使用停車查詢');
+  }
+
+  Future<ParkingStaticCache?> cached(String city) async {
+    final raw = await readCache('parking_static_v3_$city');
+    if (raw == null) return null;
+    try {
+      final j = jsonDecode(raw) as Map;
+      if (j['v'] != 3 || j['city'] != city || j['complete'] != true)
+        return null;
+      final lots = (j['lots'] as List)
+          .map((x) => ParkingLot.fromJson(Map<String, dynamic>.from(x as Map)))
+          .toList();
+      if (lots.any((x) => x.city != city)) return null;
+      return ParkingStaticCache(
+        DateTime.parse(j['at'] as String),
+        lots,
+        localReady: j['localSchema'] == 1,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String> _authorization(String id, String secret, int gen) async {
+    _credentials(id, secret);
+    final fingerprint = sha256
+        .convert(utf8.encode('$id\u0000$secret'))
+        .toString();
+    Future<String> load() async {
+      if (_token == null) {
+        final raw = await readSecret('parking_token_v3');
+        try {
+          if (raw != null)
+            _token = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+        } catch (_) {
+          _token = null;
+        }
+      }
+      _check(gen);
+      final expiry = DateTime.tryParse(_token?['expires']?.toString() ?? '');
+      if (_token?['fingerprint'] == fingerprint &&
+          expiry != null &&
+          clock().isBefore(expiry) &&
+          _token?['value'] is String) {
+        return _token!['value'] as String;
+      }
+      final request = http.Request(
+        'POST',
+        Uri.https(
+          'tdx.transportdata.tw',
+          '/auth/realms/TDXConnect/protocol/openid-connect/token',
+        ),
+      );
+      request.bodyFields = {
+        'grant_type': 'client_credentials',
+        'client_id': id,
+        'client_secret': secret,
+      };
+      final response = await _send(request, gen);
+      final j = jsonDecode(response.body) as Map;
+      final seconds = j['expires_in'];
+      if (j['access_token'] is! String ||
+          seconds is! num ||
+          !seconds.isFinite ||
+          seconds <= 0) {
+        throw ParkingApiError('TDX Token 缺少有效期限，請稍後再試');
+      }
+      final lifetime = seconds.toInt();
+      _token = {
+        'fingerprint': fingerprint,
+        'value': j['access_token'],
+        'expires': clock()
+            .add(
+              Duration(
+                seconds: math.max(0, lifetime - math.min(60, lifetime ~/ 10)),
+              ),
+            )
+            .toUtc()
+            .toIso8601String(),
+      };
+      await writeSecret('parking_token_v3', jsonEncode(_token));
+      _check(gen);
+      return j['access_token'] as String;
+    }
+
+    if (_tokenFlight != null) return _tokenFlight!;
+    final future = load();
+    _tokenFlight = future;
+    try {
+      return await future;
+    } finally {
+      _tokenFlight = null;
+    }
+  }
+
+  Future<http.Response> _send(http.Request request, int gen) async {
+    _check(gen);
+    final tdx = request.url.host == 'tdx.transportdata.tw';
+    final source = tdx ? 'TDX' : '地方政府';
+    request.followRedirects = false;
+    request.headers['Accept'] = tdx
+        ? 'application/json'
+        : 'application/json, text/csv';
+    request.headers['Accept-Encoding'] =
+        'gzip'; // Native IOClient automatically decompresses.
+    final response = await _client!
+        .send(request)
+        .timeout(const Duration(seconds: 15));
+    _check(gen);
+    if (response.statusCode == 429) {
+      await response.stream.listen((_) {}).cancel();
+      final seconds = int.tryParse(response.headers['retry-after'] ?? '');
+      await gate.blockFor(
+        Duration(seconds: seconds != null && seconds > 0 ? seconds : 60),
+      );
+      throw ParkingApiError('$source 頻率或額度受限，請稍後手動查詢；未自動重試', 429);
+    }
+    if (response.statusCode != 200) {
+      await response.stream.listen((_) {}).cancel();
+      if (tdx && response.statusCode == 401) {
+        _token = null;
+        await writeSecret('parking_token_v3', '{}');
+      }
+      throw ParkingApiError(switch (response.statusCode) {
+        401 =>
+          tdx ? 'TDX 認證失敗，請檢查 Client ID 與 Client Secret' : '地方政府資料來源拒絕存取（401）',
+        403 => '查詢失敗／IP鎖定：請確認 IP 或帳戶權限（403 不一定代表 IP 已鎖定）',
+        400 => '$source 不接受此查詢條件',
+        _ => '$source 暫時無法使用（${response.statusCode}）',
+      }, response.statusCode);
+    }
+    final bytes = <int>[];
+    await for (final chunk in response.stream.timeout(
+      const Duration(seconds: 15),
+    )) {
+      _check(gen);
+      if (bytes.length + chunk.length > 8 * 1024 * 1024)
+        throw ParkingApiError('單筆資料過大，已停止下載');
+      bytes.addAll(chunk);
+    }
+    final text = utf8.decode(bytes).trimLeft();
+    if (text.startsWith('<') &&
+        (text.toLowerCase().contains('request rejected') ||
+            text.toLowerCase().contains('access denied'))) {
+      throw ParkingApiError('查詢失敗／IP鎖定：$source 拒絕存取，請確認 IP 或服務狀態');
+    }
+    return http.Response.bytes(bytes, 200, headers: response.headers);
+  }
+
+  // Normalize only recognized parking envelopes; never interpret an error
+  // object or an arbitrary nested array as an empty successful dataset.
+  Map<String, dynamic> _parkingEnvelope(dynamic data, String path) {
+    final on = path.contains('/OnStreet/');
+    final live = path.contains('Availability/');
+    final idField = on ? 'ParkingSegmentID' : 'CarParkID';
+    final named = live
+        ? 'ParkingAvailabilities'
+        : on
+        ? 'ParkingSegments'
+        : 'CarParks';
+    String shape(dynamic value) {
+      if (value is List) return 'JSON array(${value.length})';
+      if (value is Map) {
+        final keys = value.keys
+            .take(12)
+            .map(
+              (k) => k.toString().replaceAll(RegExp(r'[^A-Za-z0-9_@.]'), '?'),
+            );
+        return 'JSON object keys=${keys.join(",")}';
+      }
+      return value == null
+          ? 'JSON null'
+          : value is String
+          ? 'JSON string'
+          : 'JSON scalar';
+    }
+
+    final description = shape(data);
+    dynamic rows;
+    int? count;
+    String container = 'array';
+    if (data is List) {
+      rows = data;
+    } else if (data is Map) {
+      if (data.containsKey('error') || data.containsKey('Error')) {
+        throw ParkingApiError('TDX HTTP 200 錯誤物件；$description');
+      }
+      final keys = [
+        'Items',
+        'items',
+        named,
+        if (on && live) 'CurbParkingSegmentAvailabilities',
+      ];
+      final present = keys.where(data.containsKey).toList();
+      if (present.length == 1) {
+        container = present.single;
+        rows = data[container];
+      }
+      final rawCount = data['Count'] ?? data['count'];
+      if (rawCount != null) {
+        if (rawCount is! int || rawCount < 0) {
+          throw ParkingApiError('TDX Count 格式異常；$description');
+        }
+        count = rawCount;
+      }
+    }
+    if (rows is! List) {
+      throw ParkingApiError('TDX HTTP 200 回應格式異常；$description；預期 $idField 清單');
+    }
+    if (rows.any(
+      (row) =>
+          row is! Map<String, dynamic> ||
+          row[idField] is! String ||
+          (row[idField] as String).isEmpty,
+    )) {
+      throw ParkingApiError('TDX 資料列缺少 $idField；$description/$container');
+    }
+    return {
+      'Items': rows,
+      if (count != null) 'Count': count,
+      '_shape': '$description/$container',
+    };
+  }
+
+  Future<dynamic> _get(
+    String path,
+    Map<String, String> query,
+    String token,
+    int gen, {
+    bool waitForSlot = false,
+    void Function(String)? progress,
+  }) async {
+    while (true) {
+      _check(gen);
+      final delay = await gate.reserveData();
+      if (delay == 0) break;
+      if (!waitForSlot)
+        throw ParkingGateError('本機每分鐘 5 筆節流，請等待 ${(delay / 1000).ceil()} 秒再查詢');
+      progress?.call('靜態下載節流等待 ${(delay / 1000).ceil()} 秒…');
+      // Short waits allow cancellation promptly, no background request retries.
+      await sleep(Duration(milliseconds: math.min(delay, 1000)));
+    }
+    _check(gen);
+    final r = http.Request(
+      'GET',
+      Uri.https('tdx.transportdata.tw', path, query),
+    );
+    if (token.isNotEmpty) r.headers['Authorization'] = 'Bearer $token';
+    final response = await _send(r, gen);
+    dynamic data;
+    try {
+      data = jsonDecode(utf8.decode(response.bodyBytes));
+    } on FormatException {
+      throw ParkingApiError(
+        'TDX HTTP 200 非有效 JSON（${response.bodyBytes.length} bytes）',
+      );
+    }
+    return _parkingEnvelope(data, path);
+  }
+
+  Future<String> _localGet(
+    String city,
+    int gen, {
+    required bool live,
+    bool waitForSlot = false,
+    void Function(String)? progress,
+  }) async {
+    while (true) {
+      _check(gen);
+      final delay = await gate.reserveData();
+      if (delay == 0) break;
+      if (live && !waitForSlot) throw ParkingGateError('本機每分鐘 5 筆節流，請稍後查詢');
+      progress?.call('地方位置下載節流等待 ${(delay / 1000).ceil()} 秒…');
+      await sleep(Duration(milliseconds: math.min(delay, 1000)));
+    }
+    final request = http.Request(
+      'GET',
+      Uri.parse(localParkingUrl(city, live: live)),
+    );
+    // Deliberately has no Authorization/header/body credentials.
+    return utf8.decode((await _send(request, gen)).bodyBytes);
+  }
+
+  /// Samples supported endpoints without modifying location caches or refresh dates.
+  Future<Map<String, String>> testCities({
+    required String id,
+    required String secret,
+    void Function(Map<String, String>)? report,
+    void Function(String)? progress,
+  }) => _operation((gen) async {
+    _credentials(id, secret);
+    final results = <String, String>{};
+    final jobs = <({String key, String city, String? path, bool live})>[];
+    for (final city in parkingCities.keys) {
+      final kinds = [
+        ('路外位置', 'OffStreet/CarPark', offStaticCities, false),
+        ('路外空位', 'OffStreet/ParkingAvailability', offLiveCities, true),
+        ('路邊位置', 'OnStreet/ParkingSegment', onStaticCities, false),
+        ('路邊空位', 'OnStreet/ParkingSegmentAvailability', onLiveCities, true),
+      ];
+      for (final kind in kinds) {
+        final key = '${parkingCities[city]} TDX ${kind.$1}';
+        final supported = kind.$3.contains(city);
+        results[key] = supported ? '尚未測試' : '未列入支援';
+        if (supported)
+          jobs.add((
+            key: key,
+            city: city,
+            path: '/api/basic/v1/Parking/${kind.$2}/City/$city',
+            live: kind.$4,
+          ));
+      }
+      if (localParkingCities.contains(city)) {
+        for (final live in [false, true]) {
+          final key = '${parkingCities[city]} 地方${live ? '空位' : '位置'}';
+          results[key] = '尚未測試';
+          jobs.add((key: key, city: city, path: null, live: live));
+        }
+      }
+    }
+    void emit() => report?.call(Map<String, String>.unmodifiable(results));
+    // No overall time limit: complete every supported job unless cancelled
+    // or blocked by authentication/access/rate limits.
+    void tick(String message) {
+      _check(gen);
+      progress?.call(
+        message.replaceAll('靜態下載', '測試').replaceAll('地方位置下載', '測試'),
+      );
+    }
+
+    emit();
+    try {
+      tick('取得測試認證…');
+      final token = await _authorization(id.trim(), secret.trim(), gen);
+      for (final job in jobs) {
+        tick(job.key);
+        results[job.key] = '測試中';
+        emit();
+        try {
+          if (job.path != null) {
+            final data = await _get(
+              job.path!,
+              {r'$format': 'JSON', r'$top': '1'},
+              token,
+              gen,
+              waitForSlot: true,
+              progress: tick,
+            );
+            if (data is! Map || data['Items'] is! List) {
+              throw ParkingApiError('回應格式異常');
+            }
+            final items = data['Items'] as List;
+            results[job.key] =
+                '${items.isEmpty ? '成功／空資料' : '成功／取得樣本（非完整驗證）'}；${data['_shape']}';
+          } else {
+            final body = await _localGet(
+              job.city,
+              gen,
+              live: job.live,
+              waitForSlot: true,
+              progress: tick,
+            );
+            final count = job.live
+                ? localParkingAvailability(job.city, body, clock()).length
+                : localParkingLots(job.city, body).length;
+            results[job.key] = '成功／解析 $count 筆';
+          }
+          _check(gen);
+        } catch (e) {
+          if (gen != _generation) {
+            results[job.key] = '未完成／已停止';
+            rethrow;
+          }
+          results[job.key] = e is ParkingApiError
+              ? '失敗／${e.message}'
+              : '失敗／連線或解析異常';
+          if (e is ParkingApiError &&
+              const [401, 403, 429].contains(e.status)) {
+            emit();
+            progress?.call('測試停止：認證、存取或頻率限制；未繼續請求其他縣市');
+            return results;
+          }
+        }
+        emit();
+      }
+      progress?.call('全部端點測試完成');
+    } catch (e) {
+      progress?.call(
+        gen != _generation
+            ? '測試已停止'
+            : e is ParkingApiError
+            ? '測試無法開始：${e.message}'
+            : '測試無法開始：認證或連線失敗',
+      );
+    } finally {
+      emit();
+    }
+    return results;
+  });
+
+  static const staticRefreshInterval = Duration(days: 7);
+
+  Future<bool> staticUpdateDue(String city) async {
+    // One-time upgrade of the two city caches; do not pretend old TDX-only data includes local feeds.
+    if (localParkingCities.contains(city)) {
+      final existing = await cached(city);
+      if (existing == null || !existing.localReady) return true;
+    }
+    final raw = await readSecret('parking_static_success_at_v6');
+    DateTime? last;
+    if (raw != null) {
+      last = DateTime.tryParse(raw);
+      if (last == null) throw ParkingApiError('位置更新紀錄異常，已停止自動下載');
+    } else {
+      // R5 only stored a Taiwan date. Use its end to avoid updating early.
+      final old = await readSecret('parking_static_success_day_v5');
+      if (old != null) {
+        if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(old)) {
+          throw ParkingApiError('位置更新紀錄異常，已停止自動下載');
+        }
+        last = DateTime.parse(
+          '${old}T00:00:00Z',
+        ).add(const Duration(hours: 16));
+      }
+    }
+    if (last != null && clock().difference(last) < staticRefreshInterval)
+      return false;
+    final cache = await cached(city);
+    return cache == null ||
+        clock().difference(cache.downloadedAt) >= staticRefreshInterval;
+  }
+
+  /// Count only successful commits; wait seven full days between updates.
+  Future<ParkingStaticCache> downloadStatic({
+    required String city,
+    required String id,
+    required String secret,
+    void Function(String)? progress,
+  }) => _operation((gen) async {
+    _credentials(id, secret);
+    if (!parkingCities.containsKey(city)) throw ParkingApiError('請選擇有效縣市');
+    if (!await staticUpdateDue(city)) {
+      throw ParkingApiError('位置資料距上次成功更新未滿 7 天');
+    }
+    // Automatic static updates are not manual vacancy clicks. Each data
+    // request still respects reserveData() and server Retry-After limits.
+    _check(gen);
+    final token = await _authorization(id.trim(), secret.trim(), gen);
+    final lots = <String, ParkingLot>{};
+    for (final on in [false, true]) {
+      if (!(on ? onStaticCities : offStaticCities).contains(city)) continue;
+      final idField = on ? 'ParkingSegmentID' : 'CarParkID';
+      final kind = on ? 'OnStreet/ParkingSegment' : 'OffStreet/CarPark';
+      final select = on
+          ? 'ParkingSegmentID,City,ParkingSegmentName,ParkingSegmentPosition,Description'
+          : 'CarParkID,City,CarParkName,CarParkPosition,Address,IsMotorcycle';
+      var skip = 0;
+      final seenIds = <String>{};
+      while (true) {
+        progress?.call('下載${on ? '路邊' : '路外'}靜態資料：已讀 $skip 筆');
+        final data = await _get(
+          '/api/basic/v1/Parking/$kind/City/$city',
+          {
+            r'$format': 'JSON',
+            r'$select': select,
+            r'$orderby': idField,
+            r'$top': '500',
+            r'$skip': '$skip',
+            r'$count': 'true',
+          },
+          token,
+          gen,
+          waitForSlot: true,
+          progress: progress,
+        );
+        if (data is! Map || data['Items'] is! List)
+          throw ParkingApiError('TDX 靜態資料格式異常，舊快取保留');
+        final items = data['Items'] as List;
+        if (items.isEmpty) {
+          if (data['Count'] is int && skip < (data['Count'] as int))
+            throw ParkingApiError('靜態資料分頁不完整，舊快取保留');
+          break;
+        }
+        for (final row in items) {
+          if (row is! Map<String, dynamic> ||
+              row[idField] is! String ||
+              !seenIds.add(row[idField] as String)) {
+            throw ParkingApiError('靜態分頁重複或資料異常，舊快取保留');
+          }
+          final lot = ParkingLot.parse({...row, 'City': city}, onStreet: on);
+          if (lot != null) lots[lot.key] = lot;
+        }
+        skip += items.length;
+        if (data['Count'] is int && skip >= (data['Count'] as int)) break;
+        // If no reliable Count, request until an empty page rather than assume page size.
+        if (skip > 100000) throw ParkingApiError('靜態資料筆數異常，舊快取保留');
+      }
+    }
+    var merged = lots.values.toList();
+    if (localParkingCities.contains(city)) {
+      progress?.call('下載${parkingCities[city]}地方政府停車場位置…');
+      final body = await _localGet(city, gen, live: false, progress: progress);
+      merged = mergeLocalParking(merged, localParkingLots(city, body));
+    }
+    _check(gen);
+    final at = clock();
+    await writeCache(
+      'parking_static_v3_$city',
+      jsonEncode({
+        'v': 3,
+        'city': city,
+        'complete': true,
+        'at': at.toUtc().toIso8601String(),
+        'localSchema': localParkingCities.contains(city) ? 1 : 0,
+        'lots': merged.map((e) => e.toJson()).toList(),
+      }),
+    );
+    // Count only after the complete cache has been committed successfully.
+    await writeSecret(
+      'parking_static_success_at_v6',
+      at.toUtc().toIso8601String(),
+    );
+    return ParkingStaticCache(
+      at,
+      merged,
+      localReady: localParkingCities.contains(city),
+    );
+  });
+
+  Future<ParkingResult> nearby({
+    required String city,
+    required String id,
+    required String secret,
+    required double lat,
+    required double lon,
+    required int radius,
+  }) => _operation((gen) async {
+    _credentials(id, secret);
+    final cache = await cached(city);
+    if (cache == null)
+      throw ParkingApiError('尚無${parkingCities[city] ?? city}位置資料，請查看自動更新狀態');
+    await gate.beginClick();
+    final sorted =
+        cache.lots
+            .where((e) => parkingDistance(lat, lon, e.lat, e.lon) <= radius)
+            .toList()
+          ..sort(
+            (a, b) => parkingDistance(
+              lat,
+              lon,
+              a.lat,
+              a.lon,
+            ).compareTo(parkingDistance(lat, lon, b.lat, b.lon)),
+          );
+    final candidates = <ParkingLot>[
+      ...sorted.where((e) => !e.onStreet).take(20),
+      ...sorted.where((e) => e.onStreet).take(20),
+    ];
+    if (candidates.isEmpty)
+      return ParkingResult([], '目前範圍沒有已快取的停車場或路段', clock());
+    final needed = [false, true]
+        .where(
+          (on) =>
+              (on ? onLiveCities : offLiveCities).contains(city) &&
+              candidates.any((e) => e.onStreet == on && !e.isLocal),
+        )
+        .toList();
+    final localGroup = candidates.where((e) => e.isLocal).toList();
+    if (needed.isEmpty && localGroup.isEmpty)
+      return ParkingResult(candidates, '此縣市的這類場地尚無動態空位資料', clock());
+    // Auth failures must not suppress an independent local feed.
+    final tokenFuture = needed.isEmpty
+        ? Future<String>.value('')
+        : _authorization(id.trim(), secret.trim(), gen);
+    // Attach the error handler immediately; each TDX group reports its own failure.
+    final safeToken = tokenFuture.then<Object>(
+      (v) => v,
+      onError: (Object e) => e,
+    );
+    Future<String?> loadKind(bool on) async {
+      final group = candidates
+          .where((e) => e.onStreet == on && !e.isLocal)
+          .toList();
+      if (group.isEmpty) return null;
+      if (!(on ? onLiveCities : offLiveCities).contains(city))
+        return '${on ? '路邊' : '路外'}空位未提供';
+      final idField = on ? 'ParkingSegmentID' : 'CarParkID';
+      final filter = group
+          .map((e) => "$idField eq '${e.id.replaceAll("'", "''")}'")
+          .join(' or ');
+      try {
+        final auth = await safeToken;
+        if (auth is! String) throw auth;
+        final kind = on
+            ? 'OnStreet/ParkingSegmentAvailability'
+            : 'OffStreet/ParkingAvailability';
+        final data = await _get(
+          '/api/basic/v1/Parking/$kind/City/$city',
+          {
+            r'$filter': filter,
+            r'$select':
+                '$idField,Availabilities,AvailableSpaces,ServiceStatus,DataCollectTime',
+            r'$top': '100',
+            r'$format': 'JSON',
+          },
+          auth,
+          gen,
+        );
+        if (data is! Map || data['Items'] is! List)
+          throw ParkingApiError('TDX 空位資料格式異常');
+        final byId = {for (final lot in group) lot.id: lot};
+        for (final row
+            in (data['Items'] as List).whereType<Map<String, dynamic>>()) {
+          byId[row[idField]]?.availability = ParkingAvailability.parse(row);
+        }
+        return null;
+      } catch (e) {
+        if (e is ParkingApiError || e is ParkingGateError) return e.toString();
+        return '${on ? '路邊' : '路外'}更新失敗，請檢查網路';
+      }
+    }
+
+    Future<String?> loadLocal() async {
+      if (localGroup.isEmpty) return null;
+      try {
+        final body = await _localGet(city, gen, live: true);
+        final values = localParkingAvailability(city, body, clock());
+        _check(gen);
+        for (final lot in localGroup) {
+          lot.availability = values[lot.id];
+        }
+        return city == 'NewTaipei' ? '*新北回報值未附來源時間；取得時間不代表現場更新時間' : null;
+      } catch (e) {
+        return e is ParkingApiError || e is ParkingGateError
+            ? e.toString()
+            : '地方政府空位更新失敗，請檢查網路或資料格式';
+      }
+    }
+
+    final warnings = await Future.wait([
+      loadKind(false),
+      loadKind(true),
+      loadLocal(),
+    ]);
+    _check(gen);
+    candidates.sort(
+      (a, b) => parkingDistance(
+        lat,
+        lon,
+        a.lat,
+        a.lon,
+      ).compareTo(parkingDistance(lat, lon, b.lat, b.lon)),
+    );
+    final notes = warnings.whereType<String>().toSet().toList();
+    if (clock().difference(cache.downloadedAt).inDays >= 7)
+      notes.add('位置資料超過 7 天，請確認自動更新狀態');
+    return ParkingResult(
+      candidates,
+      notes.isEmpty ? null : notes.join('；'),
+      clock(),
+    );
+  });
+}

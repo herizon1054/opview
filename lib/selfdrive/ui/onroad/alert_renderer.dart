@@ -42,8 +42,18 @@ const _alertColors = {
 class AlertRenderer extends StatelessWidget {
   final UIState uiState;
   final double scale;
+  /// 儀表介面用：small / mid 字級 ×0.85、黑底寬度貼合文字（置中），高度同比例縮。
+  /// false = 完全照 stock（原版介面）。full alert 一律照 stock 全螢幕。
+  final bool compact;
+  /// 高度依字級決定（只包住文字 + 上下內距），不用 stock 的固定高度。
+  /// 直向道路畫面較矮，固定高度會蓋掉太多畫面。只對 small / mid 有效。
+  final bool fitHeight;
 
-  const AlertRenderer({super.key, required this.uiState, required this.scale});
+  const AlertRenderer({super.key, required this.uiState, required this.scale,
+    this.compact = false, this.fitHeight = false});
+
+  static const compactFactor = .85;
+  double get _k => compact ? compactFactor : 1.0;
 
   @override
   Widget build(BuildContext context) {
@@ -57,6 +67,39 @@ class AlertRenderer extends StatelessWidget {
     // small or mid: positioned at bottom
     final h = (size == _sizeSmall ? _alertHeightSmall : _alertHeightMid) * scale;
     final m = _alertMargin * scale;
+
+    if (fitHeight) {
+      // 高度跟文字走：上下內距 = 字級 0.3 倍，貼道路畫面底部、水平置中
+      final fs = (size == _sizeSmall ? _alertFontMedium : _alertFontBig) * scale * _k;
+      return Positioned(
+        left: m, right: m, bottom: m,
+        child: Align(alignment: Alignment.bottomCenter, child: Container(
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(_alertBorderRadius * scale * _k),
+          ),
+          padding: EdgeInsets.symmetric(horizontal: _alertPadding * scale * _k, vertical: fs * .3),
+          child: size == _sizeSmall ? _smallContent() : _midContent(),
+        )),
+      );
+    }
+
+    if (compact) {
+      // 寬度跟文字走：Align 給寬鬆約束，Container 依內容決定寬度，最寬不超過左右 margin
+      final ch = (h - 2 * m) * _k;
+      return Positioned(
+        left: m, right: m, bottom: m, height: ch,
+        child: Align(alignment: Alignment.bottomCenter, child: Container(
+          height: ch,
+          decoration: BoxDecoration(
+            color: bgColor,
+            borderRadius: BorderRadius.circular(_alertBorderRadius * scale * _k),
+          ),
+          padding: EdgeInsets.symmetric(horizontal: _alertPadding * scale * _k),
+          child: size == _sizeSmall ? _smallContent() : _midContent(),
+        )),
+      );
+    }
 
     return Positioned(
       left: m,
@@ -77,10 +120,11 @@ class AlertRenderer extends StatelessWidget {
   /// single bold line, centered
   Widget _smallContent() {
     return Center(
+      widthFactor: compact ? 1 : null,   // compact：寬度貼合文字，不撐滿
       child: Text(uiState.alertText1,
         style: TextStyle(
           color: Colors.white,
-          fontSize: _alertFontMedium * scale,
+          fontSize: _alertFontMedium * scale * _k,
           fontWeight: FontWeight.bold,
         ),
         textAlign: TextAlign.center,
@@ -92,21 +136,23 @@ class AlertRenderer extends StatelessWidget {
   Widget _midContent() {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: compact || fitHeight ? MainAxisSize.min : MainAxisSize.max,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         Text(uiState.alertText1,
           style: TextStyle(
             color: Colors.white,
-            fontSize: _alertFontBig * scale,
+            fontSize: _alertFontBig * scale * _k,
             fontWeight: FontWeight.bold,
           ),
           textAlign: TextAlign.center,
         ),
-        SizedBox(height: _alertLineSpacing * scale),
+        // fitHeight：標題與副標行距縮成 stock 的 30%（高度只包住文字）
+        SizedBox(height: _alertLineSpacing * scale * _k * (fitHeight ? .3 : 1)),
         Text(uiState.alertText2,
           style: TextStyle(
             color: Colors.white,
-            fontSize: _alertFontSmall * scale,
+            fontSize: _alertFontSmall * scale * _k,
           ),
           textAlign: TextAlign.center,
         ),

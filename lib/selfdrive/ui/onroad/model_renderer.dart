@@ -33,6 +33,11 @@ const noThrottleColors = [
 const _leadGlowColor = Color.fromARGB(255, 218, 202, 37);
 const _leadChevronBase = Color.fromARGB(255, 201, 34, 49);
 
+// 鎖定框標籤：本車比前車快超過此值（km/h）時底色改為系統紅色
+const _leadClosingWarnKph = 20.0;
+// 系統紅色：同 alert_renderer 的 critical 警示底色（openpilot 0xC92231）
+const _leadClosingBg = Color(0xF1C92231);
+
 // -- data classes --
 
 class LeadVehicle {
@@ -94,8 +99,8 @@ class ModelRendererPainter extends CustomPainter {
     ));
 
     // project path (shorten for lead vehicle)
-    if (state.leadOne != null && state.leadOne!['status'] == true) {
-      final leadD = (state.leadOne!['dRel'] as num).toDouble() * 2.0;
+    if (state.leadDistance != null) {
+      final leadD = state.leadDistance! * 2.0;
       maxDist = (leadD - min(leadD * 0.35, 10.0)).clamp(0.0, maxDist);
     }
     final pathMaxIdx = _getPathLengthIdx(pathX, maxDist);
@@ -135,6 +140,15 @@ class ModelRendererPainter extends CustomPainter {
   void _drawPath(Canvas canvas, List<Offset> pathPoly) {
     if (pathPoly.isEmpty) return;
 
+    if (state.modernOverlay) {
+      _drawGradientPolygon(canvas, pathPoly, const [
+        Color(0x882CD4C3), Color(0x552CD4C3), Color(0x102CD4C3),
+      ], [0.0, 0.6, 1.0]);
+      final outline = Path()..addPolygon(pathPoly, true);
+      canvas.drawPath(outline, Paint()..color = const Color(0xAA61E3D4)
+        ..style = PaintingStyle.stroke..strokeWidth = 2);
+      return;
+    }
     if (state.experimentalMode) {
       _drawExperimentalPath(canvas, pathPoly);
       return;
@@ -188,18 +202,73 @@ class ModelRendererPainter extends CustomPainter {
     for (final lead in leads) {
       if (lead == null || lead['status'] != true) continue;
 
-      final dRel = (lead['dRel'] as num).toDouble();
-      final vRel = (lead['vRel'] as num).toDouble();
-      final yRel = (lead['yRel'] as num).toDouble();
+      final dRel = (lead['dRel'] as num?)?.toDouble();
+      final vRel = (lead['vRel'] as num?)?.toDouble() ?? 0;
+      final yRel = (lead['yRel'] as num?)?.toDouble();
+      if (dRel == null || yRel == null || !dRel.isFinite ||
+          !yRel.isFinite || !vRel.isFinite || dRel <= 0) {
+        continue;
+      }
+      if (state.lastRadarAt != null &&
+          DateTime.now().difference(state.lastRadarAt!).inMilliseconds > 2000) {
+        continue;
+      }
       final idx = _getPathLengthIdx(pathX, dRel);
 
       final z = (idx < state.pathZ.length) ? state.pathZ[idx] : 0.0;
       final point = _mapToScreen(dRel, -yRel, z + _pathOffsetZ);
       if (point == null) continue;
 
+      if (state.modernOverlay) {
+        // 前車速度：radarState LeadData.vLead（m/s，絕對速度）；沒有時以 vEgo + vRel 推算
+        final vLeadRaw = (lead['vLead'] as num?)?.toDouble();
+        final vLead = (vLeadRaw != null && vLeadRaw.isFinite) ? vLeadRaw : state.vEgo + vRel;
+        _drawLeadBox(canvas, point, dRel, vLead);
+        continue;
+      }
       final lv = _buildLeadVehicle(dRel, vRel, point);
       _drawLeadTriangles(canvas, lv);
     }
+  }
+
+  // A projected radar marker, not an image-detection bounding box.
+  void _drawLeadBox(Canvas canvas, Offset point, double distance, double vLead) {
+    // 依短邊縮放：橫向 = 高（與原本相同），直向 = 寬，兩種方向外觀一致
+    final scale = (min(contentRect.width, contentRect.height) / 600).clamp(0.6, 2.0);
+    final width = (1500 / distance).clamp(28.0, 85.0) * scale;
+    final rect = Rect.fromLTWH(point.dx - width / 2, point.dy - width, width, width * .7);
+    final paint = Paint()..color = const Color(0xFF61E3D4)
+      ..style = PaintingStyle.stroke..strokeWidth = 2 * scale;
+    final arm = width * .23;
+    for (final corner in [rect.topLeft, rect.topRight, rect.bottomLeft, rect.bottomRight]) {
+      final dx = corner.dx == rect.left ? arm : -arm;
+      final dy = corner.dy == rect.top ? arm : -arm;
+      canvas.drawPath(Path()..moveTo(corner.dx + dx, corner.dy)
+        ..lineTo(corner.dx, corner.dy)..lineTo(corner.dx, corner.dy + dy), paint);
+    }
+    // 鎖定框下方：距離（固定公尺）· 前車速度（km 或 mph，不顯示 /h）。車距時間仍在右側儀表卡片。
+    // 本車比前車快超過 20 km/h：底色改為系統紅色（與 critical 警示同色 0xC92231）。
+    final unit = state.isMetric ? 'km' : 'mph';
+    final conv = state.isMetric ? msToKph : msToMph;
+    final speed = vLead.isFinite ? (max(0.0, vLead) * conv).round().toString() : '—';
+    final label = '${distance.round()} m · $speed $unit';
+    final closing = vLead.isFinite && state.vEgo.isFinite &&
+        (state.vEgo - vLead) * msToKph > _leadClosingWarnKph;
+    final text = TextPainter(text: TextSpan(text: label,
+      style: TextStyle(color: Colors.white, fontSize: 12 * scale, fontWeight: FontWeight.w600)),
+      textDirection: TextDirection.ltr)..layout();
+    final gap = 8 * scale;
+    // 一律放框下方；只有超出畫面底部時往上收，避免被切掉
+    final oy = min(rect.bottom + gap, contentRect.bottom - text.height - 4 * scale);
+    final minX = contentRect.left + 10 * scale;
+    final maxX = max(minX, contentRect.right - text.width - 10 * scale);
+    final ox = min(max(point.dx - text.width / 2, minX), maxX);
+    final origin = Offset(ox, oy);
+    canvas.drawRRect(RRect.fromRectAndRadius(
+      Rect.fromLTWH(origin.dx - 7 * scale, origin.dy - 4 * scale,
+        text.width + 14 * scale, text.height + 8 * scale), Radius.circular(10 * scale)),
+      Paint()..color = closing ? _leadClosingBg : const Color(0xDD10191D));
+    text.paint(canvas, origin);
   }
 
   // -- projection --
@@ -312,7 +381,7 @@ class ModelRendererPainter extends CustomPainter {
     lv.fillAlpha = fillAlpha.round();
 
     // size: bigger when closer, scaled to match stock 1080p reference
-    final scale = contentRect.height / 1080.0;
+    final scale = min(contentRect.width, contentRect.height) / 1080.0; // 依短邊（直向一致）
     final sz = ((25 * 30) / (dRel / 3 + 30)).clamp(15.0, 30.0) * 2.35 * scale;
     final x = point.dx.clamp(0.0, contentRect.width - sz / 2);
     final y = min(point.dy, contentRect.height - sz * 0.6);

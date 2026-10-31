@@ -5,17 +5,18 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE"/>
 
-    <!-- remove permissions leaked by flutter_webrtc (we don't need camera/mic/location) -->
+    <!-- remove permissions leaked by flutter_webrtc (we do not need camera/mic) -->
     <uses-permission android:name="android.permission.CAMERA" tools:node="remove"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO" tools:node="remove"/>
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" tools:node="remove"/>
-    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" tools:node="remove"/>
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" tools:node="remove"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.BLUETOOTH" tools:node="remove"/>
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" tools:node="remove"/>
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" tools:node="remove"/>
 
     <application
+        android:allowBackup="false"
         android:label="opview"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
@@ -23,11 +24,13 @@
         android:usesCleartextTraffic="true">
         <activity
             android:name=".MainActivity"
+            android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
             android:exported="true"
             android:launchMode="singleTop"
             android:taskAffinity=""
             android:theme="@style/LaunchTheme"
-            android:screenOrientation="sensorLandscape"
+            android:screenOrientation="fullUser"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustResize">

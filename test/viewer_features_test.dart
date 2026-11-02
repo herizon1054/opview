@@ -54,7 +54,7 @@ void main() {
     await restored.load();
     expect(restored.layout, ViewerLayout.detailed);
     expect(restored.metric, false);
-    expect(restored.pictureInPicture, true);
+    expect(restored.pictureInPicture, false); // v23：PiP 功能取消，load() 一律關閉
     expect(restored.brightness, .3);
     expect(restored.hudEvery, 1);
     restored.setBrightness(null);

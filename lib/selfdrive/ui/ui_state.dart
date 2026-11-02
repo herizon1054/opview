@@ -4,6 +4,7 @@
 // one ChangeNotifier, fed by telemetry parser.
 // data-driven refresh: notifyListeners on modelV2 arrival.
 
+import 'package:opview/services/stop_go_alerts.dart';
 import 'package:flutter/foundation.dart';
 
 // -- constants --
@@ -72,6 +73,9 @@ class UIState extends ChangeNotifier {
 
   // selfdriveState
   bool enabled = false;
+  // carState.standstill / gasPressed（停等計時、前車 / 綠燈起步偵測）
+  bool standstill = false;
+  bool gasPressed = false;
   bool experimentalMode = false;
   String alertText1 = '';
   String alertText2 = '';
@@ -228,6 +232,8 @@ class UIState extends ChangeNotifier {
     gearShifter = gear is String ? gear
         : gear is int && gear >= 0 && gear < _gearNames.length ? _gearNames[gear] : 'unknown';
     vEgo = (data['vEgo'] as num?)?.toDouble() ?? 0.0;
+    standstill = data['standstill'] == true;
+    gasPressed = data['gasPressed'] == true;
     vEgoCluster = (data['vEgoCluster'] as num?)?.toDouble() ?? 0.0;
     vCruiseCluster = (data['vCruiseCluster'] as num?)?.toDouble() ?? 0.0;
     if (!vEgoClusterSeen && vEgoCluster != 0.0) vEgoClusterSeen = true;
@@ -286,6 +292,7 @@ class UIState extends ChangeNotifier {
     final target = allowThrottle ? 1.0 : 0.0;
     throttleBlend = throttleBlend + k * (target - throttleBlend);
 
+    StopGoAlerts.instance.update(this); // 前車起步 / 綠燈起步 / 停等計時（20 Hz）
     _notify();  // data-driven: render on modelV2 arrival
   }
 

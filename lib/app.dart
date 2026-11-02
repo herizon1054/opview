@@ -3,6 +3,7 @@
 // 顯示設定「打開 App 自動進入 opview」開啟時直接進 opview 畫面；opview 畫面「退出」或 Android 返回鍵回主畫面。
 // 主畫面只搜尋 comma、讀寫車型（:5088），不建立 WebRTC；進入 opview 畫面才連 webrtcd（ConnectionManager.setStreaming）。
 
+import 'dart:async';
 import 'package:flutter/material.dart';
 
 import 'services/parking/parking_startup.dart';
@@ -13,6 +14,8 @@ import 'package:opview/selfdrive/ui/onroad/augmented_road_view.dart';
 import 'package:opview/selfdrive/ui/home/home_page.dart';
 import 'package:opview/services/connection_manager.dart';
 import 'package:opview/services/viewer_settings.dart';
+import 'package:opview/services/stop_go_alerts.dart';
+import 'package:opview/services/alert_sound.dart';
 import 'package:opview/services/viewer_system.dart' as system;
 import 'package:opview/selfdrive/ui/settings/op_settings_link.dart'
     show opSettingsGuardState;
@@ -32,6 +35,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
   bool _onHome = true;
   bool _streamPaused = false;
   bool? _pipOffered;
+  StreamSubscription<StopGoKind>? _stopGoSub;
   int _lifecycleEpoch = 0;
   AppLifecycleState _lifecycle = AppLifecycleState.resumed;
 
@@ -40,7 +44,8 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     final want =
         !_onHome &&
         _uiState.isConnected &&
-        _settings.pictureInPicture &&
+        _settings.pictureInPicture && // v23：PiP 已取消，load() 一律為 false
+
         !_streamPaused;
     if (want == _pipOffered) return;
     _pipOffered = want;
@@ -51,6 +56,8 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     _uiState.isMetric = _settings.metric;
     _uiState.tdxEnabled = _settings.tdx;
     _uiState.modernOverlay = _settings.layout != ViewerLayout.classic;
+    StopGoAlerts.instance.configure(greenLight: _settings.greenLightAlert,
+        leadDepart: _settings.leadDepartAlert, standstillTimer: _settings.standstillTimer);
     _uiState.notifyNow();
     _updatePipOffer();
   }
@@ -116,6 +123,8 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     _updatePipOffer();
     _loadSettings();
     _connectionManager.start();
+    // 前車起步 / 綠燈起步：聲音在直向、橫向都播放
+    _stopGoSub = StopGoAlerts.instance.events.listen((k) => playStopGoSound(k, _settings.alertSound));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) ParkingStartup.instance.start();
     });
@@ -123,6 +132,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _stopGoSub?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     ParkingStartup.instance.stop();
     _lifecycleEpoch++;

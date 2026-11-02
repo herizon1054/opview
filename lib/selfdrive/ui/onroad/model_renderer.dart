@@ -199,7 +199,9 @@ class ModelRendererPainter extends CustomPainter {
   /// draw lead vehicle indicators
   void _drawLeadIndicators(Canvas canvas, List<double> pathX) {
     final leads = [state.leadOne, state.leadTwo];
-    for (final lead in leads) {
+    double? oneD, oneY; // leadOne 位置（leadTwo 與它重疊時不畫箭頭）
+    for (var li = 0; li < leads.length; li++) {
+      final lead = leads[li];
       if (lead == null || lead['status'] != true) continue;
 
       final dRel = (lead['dRel'] as num?)?.toDouble();
@@ -220,10 +222,19 @@ class ModelRendererPainter extends CustomPainter {
       if (point == null) continue;
 
       if (state.modernOverlay) {
-        // 前車速度：radarState LeadData.vLead（m/s，絕對速度）；沒有時以 vEgo + vRel 推算
-        final vLeadRaw = (lead['vLead'] as num?)?.toDouble();
-        final vLead = (vLeadRaw != null && vLeadRaw.isFinite) ? vLeadRaw : state.vEgo + vRel;
-        _drawLeadBox(canvas, point, dRel, vLead);
+        if (li == 0) {
+          // leadOne：鎖定框（含十字線）+ 下方距離 / 速度標籤
+          // 前車速度：radarState LeadData.vLead（m/s，絕對速度）；沒有時以 vEgo + vRel 推算
+          final vLeadRaw = (lead['vLead'] as num?)?.toDouble();
+          final vLead = (vLeadRaw != null && vLeadRaw.isFinite) ? vLeadRaw : state.vEgo + vRel;
+          _drawLeadBox(canvas, point, dRel, vLead);
+          oneD = dRel;
+          oneY = yRel;
+        } else {
+          // leadTwo：目標下方紅色箭頭（與 leadOne 幾乎同一位置時不畫，避免疊在鎖定框上）
+          if (oneD != null && (dRel - oneD).abs() < 3 && (yRel - oneY!).abs() < 1.5) continue;
+          _drawLeadTwoArrow(canvas, point, dRel);
+        }
         continue;
       }
       final lv = _buildLeadVehicle(dRel, vRel, point);
@@ -246,6 +257,15 @@ class ModelRendererPainter extends CustomPainter {
       canvas.drawPath(Path()..moveTo(corner.dx + dx, corner.dy)
         ..lineTo(corner.dx, corner.dy)..lineTo(corner.dx, corner.dy + dy), paint);
     }
+    // 框內十字線（中心留小缺口，不遮住前車）
+    final cross = Paint()..color = paint.color.withAlpha(200)
+      ..style = PaintingStyle.stroke..strokeWidth = 1.2 * scale;
+    final c = rect.center;
+    final gapC = width * .07;
+    canvas.drawLine(Offset(rect.left + width * .18, c.dy), Offset(c.dx - gapC, c.dy), cross);
+    canvas.drawLine(Offset(c.dx + gapC, c.dy), Offset(rect.right - width * .18, c.dy), cross);
+    canvas.drawLine(Offset(c.dx, rect.top + rect.height * .14), Offset(c.dx, c.dy - gapC), cross);
+    canvas.drawLine(Offset(c.dx, c.dy + gapC), Offset(c.dx, rect.bottom - rect.height * .14), cross);
     // 鎖定框下方：距離（固定公尺）· 前車速度（km 或 mph，不顯示 /h）。車距時間仍在右側儀表卡片。
     // 本車比前車快超過 20 km/h：底色改為系統紅色（與 critical 警示同色 0xC92231）。
     final unit = state.isMetric ? 'km' : 'mph';
@@ -269,6 +289,27 @@ class ModelRendererPainter extends CustomPainter {
         text.width + 14 * scale, text.height + 8 * scale), Radius.circular(10 * scale)),
       Paint()..color = closing ? _leadClosingBg : const Color(0xDD10191D));
     text.paint(canvas, origin);
+  }
+
+  /// leadTwo：目標點（車輛底部）下方的紅色向上箭頭，大小依距離縮放（同鎖定框的縮放規則）
+  void _drawLeadTwoArrow(Canvas canvas, Offset point, double distance) {
+    final scale = (min(contentRect.width, contentRect.height) / 600).clamp(0.6, 2.0);
+    final w = (900 / distance).clamp(16.0, 38.0) * scale;
+    final h = w * .8;
+    // 一律放目標下方；超出畫面底部時往上收
+    final top = min(point.dy + 4 * scale, contentRect.bottom - h - 4 * scale);
+    final path = Path()
+      ..moveTo(point.dx, top)                                // 尖端朝上指向目標
+      ..lineTo(point.dx + w / 2, top + h * .55)
+      ..lineTo(point.dx + w * .2, top + h * .55)
+      ..lineTo(point.dx + w * .2, top + h)
+      ..lineTo(point.dx - w * .2, top + h)
+      ..lineTo(point.dx - w * .2, top + h * .55)
+      ..lineTo(point.dx - w / 2, top + h * .55)
+      ..close();
+    canvas.drawPath(path, Paint()..color = const Color(0xFFE5393B));
+    canvas.drawPath(path, Paint()..color = const Color(0xCC10191D)
+      ..style = PaintingStyle.stroke..strokeWidth = 1.5 * scale);
   }
 
   // -- projection --

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'viewer_system.dart' as system;
+import 'alert_sound.dart';
 
 enum ViewerLayout { dashboard, classic, detailed }
 
@@ -11,6 +12,11 @@ class ViewerSettings extends ChangeNotifier {
   bool tdx = true; // dplcc TDX 路況顯示（前方車速 + 事件跑馬燈）
   bool autoFullscreen = false; // 連線後自動收起側欄
   bool autoEnterOpview = false; // 打開 App 直接進入 opview 畫面（跳過主畫面）
+  // 停等與起步提醒（移植自 sunnypilot：LeadDepartAlert / GreenLightAlert / StandstillTimer）
+  bool leadDepartAlert = false;
+  bool greenLightAlert = false;
+  bool standstillTimer = false;
+  AlertSoundMode alertSound = AlertSoundMode.mute; // 預設靜音
   bool lineNotify = false; // 直向下方顯示 LINE 通知（需通知存取權）
   double? brightness;
   int hudEvery = 4; // HUD ~5 Hz when modelV2 is 20 Hz; path and alerts unchanged.
@@ -24,10 +30,16 @@ class ViewerSettings extends ChangeNotifier {
     final name = prefs.getString('viewer_layout');
     layout = ViewerLayout.values.firstWhere((e) => e.name == name, orElse: () => ViewerLayout.dashboard);
     metric = prefs.getBool('viewer_metric') ?? true;
-    pictureInPicture = prefs.getBool('viewer_pip') ?? false;
+    // v23：取消子母畫面（PiP）功能，一律關閉（舊設定忽略）
+    pictureInPicture = false;
     tdx = prefs.getBool('viewer_tdx') ?? true;
     autoFullscreen = prefs.getBool('viewer_auto_fullscreen') ?? false;
     autoEnterOpview = prefs.getBool('viewer_auto_enter_opview') ?? false;
+    leadDepartAlert = prefs.getBool('viewer_lead_depart_alert') ?? false;
+    greenLightAlert = prefs.getBool('viewer_green_light_alert') ?? false;
+    standstillTimer = prefs.getBool('viewer_standstill_timer') ?? false;
+    final snd = prefs.getString('viewer_alert_sound');
+    alertSound = AlertSoundMode.values.firstWhere((e) => e.name == snd, orElse: () => AlertSoundMode.mute);
     lineNotify = prefs.getBool('viewer_line_notify') ?? false;
     final b = prefs.getDouble('viewer_brightness');
     brightness = b != null && b.isFinite && b >= 0 ? b.clamp(.05, 1.0).toDouble() : null;
@@ -52,6 +64,18 @@ class ViewerSettings extends ChangeNotifier {
   }
   void setLineNotify(bool value) {
     lineNotify = value; _prefs?.setBool('viewer_line_notify', value); notifyListeners();
+  }
+  void setLeadDepartAlert(bool value) {
+    leadDepartAlert = value; _prefs?.setBool('viewer_lead_depart_alert', value); notifyListeners();
+  }
+  void setGreenLightAlert(bool value) {
+    greenLightAlert = value; _prefs?.setBool('viewer_green_light_alert', value); notifyListeners();
+  }
+  void setStandstillTimer(bool value) {
+    standstillTimer = value; _prefs?.setBool('viewer_standstill_timer', value); notifyListeners();
+  }
+  void setAlertSound(AlertSoundMode value) {
+    alertSound = value; _prefs?.setString('viewer_alert_sound', value.name); notifyListeners();
   }
   void setPip(bool value) {
     pictureInPicture = value; _prefs?.setBool('viewer_pip', value); notifyListeners();

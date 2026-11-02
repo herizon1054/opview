@@ -3,6 +3,9 @@ import 'package:opview/services/viewer_settings.dart';
 import 'package:opview/services/viewer_system.dart' as system;
 import 'package:opview/services/app_log.dart';
 import 'op_settings_link.dart';
+import 'package:opview/services/stop_go_alerts.dart';
+import 'package:opview/services/alert_sound.dart';
+import '../onroad/stop_go_overlay.dart' show stopGoSettingIcon;
 import 'package:opview/services/tdx_support.dart';
 import 'package:opview/services/line_notifications.dart';
 
@@ -54,11 +57,36 @@ class ViewerSettingsDialog extends StatelessWidget {
           SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('自動進入全螢幕'),
             subtitle: const Text('連線且畫面開始更新後 3 秒進入全螢幕並轉為橫向；點右上角可退出，下次連線再自動進入'),
             value: settings.autoFullscreen, onChanged: settings.setAutoFullscreen),
-          if (system.pipSupported.value)
-          SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('子母畫面 PiP'),
-            subtitle: const Text('連線時按 Home 保留畫面'),
-            value: settings.pictureInPicture,
-            onChanged: settings.setPip),
+          const Divider(),
+          const Text('停等與起步提醒'),
+          const Text('畫面提示（道路畫面右側圓形）與前車起步、綠燈起步的聲音，直向、橫向都有。'
+            '只在停車中且 openpilot 未啟用時運作，提醒僅供參考，起步前請自行確認路況。',
+            style: TextStyle(fontSize: 12, color: Colors.white54)),
+          SwitchListTile(contentPadding: EdgeInsets.zero,
+            secondary: stopGoSettingIcon(StopGoKind.leadDepart),
+            title: const Text('前車起步偵測'),
+            subtitle: const Text('停在前車後方（8 公尺內）時，前車開走即提醒｜畫面與聲音：直向、橫向'),
+            value: settings.leadDepartAlert, onChanged: settings.setLeadDepartAlert),
+          SwitchListTile(contentPadding: EdgeInsets.zero,
+            secondary: stopGoSettingIcon(StopGoKind.greenLight),
+            title: const Text('綠燈起步偵測'),
+            subtitle: const Text('停車且前方沒有車時，模型判斷前方可通行（綠燈）即提醒｜畫面與聲音：直向、橫向'),
+            value: settings.greenLightAlert, onChanged: settings.setGreenLightAlert),
+          SwitchListTile(contentPadding: EdgeInsets.zero,
+            secondary: stopGoSettingIcon(null),
+            title: const Text('車輛停等計時'),
+            subtitle: const Text('車輛靜止時在 HUD 顯示停等時間（分:秒）｜直向、橫向'),
+            value: settings.standstillTimer, onChanged: settings.setStandstillTimer),
+          Row(children: [
+            const Expanded(child: Text('起步提醒聲音（直向、橫向）')),
+            DropdownButton<AlertSoundMode>(value: settings.alertSound,
+              items: [for (final m in AlertSoundMode.values)
+                DropdownMenuItem(value: m, child: Text(alertSoundLabel(m)))],
+              onChanged: (v) { if (v != null) settings.setAlertSound(v); }),
+            IconButton(tooltip: '試聽', icon: const Icon(Icons.volume_up_outlined),
+              onPressed: settings.alertSound == AlertSoundMode.mute ? null
+                  : () => playStopGoSound(StopGoKind.leadDepart, settings.alertSound)),
+          ]),
           if (system.brightnessSupported.value)
           SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('亮度跟隨系統'),
             value: settings.brightness == null,

@@ -14,6 +14,8 @@ import 'portrait_panel.dart';
 import 'compact_hud.dart';
 import 'throttled_hud.dart';
 import 'tdx_marquee.dart';
+import 'stop_go_overlay.dart';
+import 'package:opview/services/stop_go_alerts.dart';
 import 'blindspot_glow.dart';
 import 'vehicle_details.dart';
 import '../settings/viewer_settings_dialog.dart';
@@ -435,6 +437,10 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                         if (!widget.pip) AlertRenderer(uiState: widget.uiState,
                           scale: portrait ? max(scale, screenW / 1500) : scale,
                           compact: widget.uiState.modernOverlay, fitHeight: portrait),
+                        // 前車起步 / 綠燈起步 / 停等計時：直向、橫向都顯示在道路畫面右側（聲音另由 app.dart 播放）
+                        if (!widget.pip && !_stale && (StopGoAlerts.instance.greenLightEnabled ||
+                            StopGoAlerts.instance.leadDepartEnabled || StopGoAlerts.instance.standstillTimerEnabled))
+                          Positioned.fill(child: StopGoOverlay(state: widget.uiState, screenH: screenH)),
                       ],
                     ),
                   ),

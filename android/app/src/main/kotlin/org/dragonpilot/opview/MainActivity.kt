@@ -119,6 +119,63 @@ class MainActivity: FlutterActivity() {
         }
     }
 
+    // ---- 起步提醒聲音 ----
+    // 語音：TextToSpeech，優先使用 Google 文字轉語音引擎（com.google.android.tts），語言 zh-TW；
+    // 選用 Google 台灣中文的預設聲音（女聲）。音訊用途設為導航語音：播放時系統會壓低音樂音量。
+    private var tts: android.speech.tts.TextToSpeech? = null
+    private var ttsReady = false
+    private var pendingSpeech: String? = null
+
+    private fun speakAlert(text: String) {
+        if (text.isEmpty()) return
+        val t = tts
+        if (t == null) {
+            pendingSpeech = text
+            val listener = android.speech.tts.TextToSpeech.OnInitListener { status ->
+                if (status == android.speech.tts.TextToSpeech.SUCCESS) {
+                    tts?.let { e ->
+                        e.setLanguage(java.util.Locale.TAIWAN)
+                        e.setAudioAttributes(android.media.AudioAttributes.Builder()
+                            .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                            .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                        ttsReady = true
+                        pendingSpeech?.let { p -> e.speak(p, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "opview-stopgo") }
+                        pendingSpeech = null
+                    }
+                } else {
+                    // 沒有可用的語音引擎：改用嗶嗶聲
+                    pendingSpeech = null
+                    beepAlert()
+                }
+            }
+            val google = "com.google.android.tts"
+            val hasGoogle = try { packageManager.getPackageInfo(google, 0); true } catch (e: Exception) { false }
+            tts = if (hasGoogle) android.speech.tts.TextToSpeech(this, listener, google)
+                  else android.speech.tts.TextToSpeech(this, listener)
+            return
+        }
+        if (ttsReady) t.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "opview-stopgo")
+        else pendingSpeech = text
+    }
+
+    // 嗶嗶聲：ToneGenerator 雙短音（通知音量）
+    private fun beepAlert() {
+        try {
+            val tg = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 90)
+            tg.startTone(android.media.ToneGenerator.TONE_PROP_BEEP2, 400)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ tg.release() }, 800)
+        } catch (e: Exception) {
+            // 部分機型同時只能有少數 ToneGenerator：略過
+        }
+    }
+
+    override fun onDestroy() {
+        tts?.shutdown()
+        tts = null
+        ttsReady = false
+        super.onDestroy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installCrashRecorder()
         super.onCreate(savedInstanceState)
@@ -375,6 +432,13 @@ class MainActivity: FlutterActivity() {
                         startActivity(i)
                         result.success(true)
                     } catch (e: Exception) { result.success(false) }
+                }
+                // 前車起步 / 綠燈起步提醒聲音：{mode: voice|beep, text}
+                "alertSound" -> {
+                    val mode = call.argument<String>("mode") ?: "beep"
+                    val text = call.argument<String>("text") ?: ""
+                    if (mode == "voice") speakAlert(text) else beepAlert()
+                    result.success(true)
                 }
                 "isInPip" -> result.success(
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode)

@@ -91,8 +91,9 @@ class Fixture {
         },
       ]);
     }
-    if (r.method == 'POST')
+    if (r.method == 'POST') {
       return response({'access_token': 'token', 'expires_in': 3600});
+    }
     final on = r.url.path.contains('/OnStreet/');
     final live = r.url.path.contains('Availability/');
     return response({
@@ -211,8 +212,9 @@ final parkingCoreCases = <String, Future<void> Function()>{
         // Kaohsiung: 2 off-street + 3 on-street static pages = 5 requests.
         final f = Fixture();
         await f.download();
-        for (var i = 0; i < 3; i++)
+        for (var i = 0; i < 3; i++) {
           check(await f.gate.reserveData() == 0, 'fill slot $i');
+        }
         check(await f.gate.remaining(dataSlots: 2) > 0, 'button countdown');
         final before = f.requests.length;
         await fails(f.query(), '節流');
@@ -312,8 +314,9 @@ final parkingCoreCases = <String, Future<void> Function()>{
           final f = Fixture();
           f.handler = (req) async {
             final response = await f.normal(req);
-            if (req.method != 'GET' || req.url.host != 'tdx.transportdata.tw')
+            if (req.method != 'GET' || req.url.host != 'tdx.transportdata.tw') {
               return response;
+            }
             final decoded = jsonDecode(response.body) as Map;
             final rows =
                 (int.tryParse(req.url.queryParameters[r'$skip'] ?? '0') ?? 0) >
@@ -479,8 +482,9 @@ final parkingCoreCases = <String, Future<void> Function()>{
   '5/minute rolling gate persists and is shared with static requests':
       () async {
         final f = Fixture();
-        for (var i = 0; i < 5; i++)
+        for (var i = 0; i < 5; i++) {
           check(await f.gate.reserveData() == 0, 'slot $i');
+        }
         check(await f.newGate().reserveData() > 0, 'restart gate');
         f.advance(61);
         check(await f.newGate().reserveData() == 0, 'window reset');
@@ -679,8 +683,9 @@ final parkingCoreCases = <String, Future<void> Function()>{
   '1000 and 1200 meter searches filter different candidates': () async {
     final f = Fixture();
     f.handler = (r) async {
-      if (r.method == 'POST' || r.url.path.contains('Availability/'))
+      if (r.method == 'POST' || r.url.path.contains('Availability/')) {
         return f.normal(r);
+      }
       final on = r.url.path.contains('/OnStreet/');
       return f.response({
         'Items': [f.staticRow('same', on, lat: on ? 25.010 : 25)],
@@ -893,8 +898,7 @@ final parkingCoreCases = <String, Future<void> Function()>{
     const header = 'ID,NAME,ADDRESS,TW97X,TW97Y,TOTALCAR\n';
     final lots = localParkingLots(
       'NewTaipei',
-      header +
-          '001,場一,路一,250000,2765777,10\n001,場一,不同地址文字,250000,2765777,10\n' +
+      '${header}001,場一,路一,250000,2765777,10\n001,場一,不同地址文字,250000,2765777,10\n'
           '002,場二,路二,250000,2765777,10\n002,別場,路三,250000,2765777,10\n',
     );
     check(

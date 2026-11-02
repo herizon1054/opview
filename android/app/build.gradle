@@ -4,6 +4,14 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
+// 選用的固定簽章：android/key.properties 存在時使用（CI 由 scripts/ci_signing.sh 從 GitHub secrets 產生），
+// 否則沿用 debug 金鑰。固定金鑰簽的 APK 才能直接覆蓋安裝舊版。
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file("key.properties")
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+}
+
 android {
     namespace = "org.dragonpilot.opview"
     // match dashy: explicit SDK versions for old headunit compat
@@ -24,7 +32,8 @@ android {
         minSdk = 21          // Android 5.0 — pinned, do NOT use flutter.minSdkVersion (floats to 24+)
         targetSdk = 34
         versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        // 結尾 .0 省略：2.0.0 → 2.0（與 Release 標籤 v2.0 一致）；2.0.1 照原樣
+        versionName = flutter.versionName.replaceFirst(/^(\d+\.\d+)\.0$/, '$1')
     }
 
     // include 32-bit ARM for old headunits
@@ -37,9 +46,20 @@ android {
         }
     }
 
+    signingConfigs {
+        if (keystorePropertiesFile.exists()) {
+            release {
+                storeFile = file(keystoreProperties["storeFile"])
+                storePassword = keystoreProperties["storePassword"]
+                keyAlias = keystoreProperties["keyAlias"]
+                keyPassword = keystoreProperties["keyPassword"]
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig = signingConfigs.debug
+            signingConfig = keystorePropertiesFile.exists() ? signingConfigs.release : signingConfigs.debug
         }
     }
 }

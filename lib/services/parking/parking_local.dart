@@ -47,14 +47,16 @@ List<Map<String, dynamic>> _rows(String city, String body, bool live) {
   final required = live
       ? ['ID', 'AVAILABLECAR']
       : ['ID', 'NAME', 'TW97X', 'TW97Y', 'TOTALCAR'];
-  if (!required.every(headers.contains))
+  if (!required.every(headers.contains)) {
     throw const FormatException('新北市停車資料缺少必要欄位');
+  }
   return table
       .skip(1)
       .where((r) => r.any((e) => e.toString().trim().isNotEmpty))
       .map((r) {
-        if (r.length != headers.length)
+        if (r.length != headers.length) {
           throw const FormatException('新北市 CSV 列不完整');
+        }
         return <String, dynamic>{
           for (var i = 0; i < headers.length; i++) headers[i]: r[i],
         };
@@ -80,8 +82,9 @@ double? _double(Object? x) {
       x < 100000 ||
       x > 400000 ||
       y < 2400000 ||
-      y > 2900000)
+      y > 2900000) {
     return null;
+  }
   const a = 6378137.0, f = 1 / 298.257222101, k = 0.9999;
   const e2 = f * (2 - f), ep2 = e2 / (1 - e2);
   final mu =
@@ -159,16 +162,19 @@ List<ParkingLot> localParkingLots(String city, String body) {
   for (final row in rows) {
     final ntpc = city == 'NewTaipei';
     final id = row[ntpc ? 'ID' : 'PARKNO']?.toString().trim() ?? '';
-    if (id.isEmpty || !seen.add(id))
+    if (id.isEmpty || !seen.add(id)) {
       throw const FormatException('地方停車場編號缺漏或重複');
-    if ((_integer(row[ntpc ? 'TOTALCAR' : 'TOTALQUANTITY']) ?? 0) <= 0)
+    }
+    if ((_integer(row[ntpc ? 'TOTALCAR' : 'TOTALQUANTITY']) ?? 0) <= 0) {
       continue;
+    }
     final x = _double(row[ntpc ? 'TW97X' : 'LONGITUDE']);
     final y = _double(row[ntpc ? 'TW97Y' : 'LATITUDE']);
     if (x == null || y == null) continue;
     final p = ntpc ? twd97ToWgs84(x, y) : (y, x);
-    if (p == null || p.$1 < 21.5 || p.$1 > 26.5 || p.$2 < 119 || p.$2 > 123)
+    if (p == null || p.$1 < 21.5 || p.$1 > 26.5 || p.$2 < 119 || p.$2 > 123) {
       continue;
+    }
     final name = row[ntpc ? 'NAME' : 'PARKINGNAME']?.toString().trim() ?? '';
     if (name.isEmpty) continue;
     result.add(
@@ -210,8 +216,9 @@ Map<String, ParkingAvailability> localParkingAvailability(
     final ntpc = city == 'NewTaipei';
     final id = row[ntpc ? 'ID' : 'PARKNO']?.toString().trim() ?? '';
     final key = 'local:${ntpc ? 'ntpc' : 'hccg'}:$id';
-    if (id.isEmpty || result.containsKey(key))
+    if (id.isEmpty || result.containsKey(key)) {
       throw const FormatException('地方空位編號缺漏或重複');
+    }
     final n = _integer(row[ntpc ? 'AVAILABLECAR' : 'FREEQUANTITY']);
     final total = ntpc ? null : _integer(row['TOTALQUANTITY']);
     final cars =

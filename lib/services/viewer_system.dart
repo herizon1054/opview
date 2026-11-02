@@ -1,7 +1,6 @@
 // Selected PiP / window-brightness functionality from opview-rivian-support.
 // No APK installer, remote commands, or extra Android permissions.
 import 'package:flutter/foundation.dart';
-import 'dart:ui' show Brightness, Color;
 import 'package:flutter/services.dart';
 
 const _channel = MethodChannel('org.dragonpilot.opview/system');
@@ -12,6 +11,8 @@ final brightnessSupported = ValueNotifier<bool>(false);
 void listenForPip() {
   _channel.setMethodCallHandler((call) async {
     if (call.method == 'pipChanged') pipMode.value = call.arguments == true;
+    // Android 端的狀態訊息（背景執行服務啟動 / 停止 / 失敗），寫進 opview log
+    if (call.method == 'nativeLog') debugPrint('[opview] ${call.arguments}');
   });
 }
 void stopListeningForPip() {
@@ -30,6 +31,16 @@ Future<void> setPipEnabled(bool enabled) async {
     pipSupported.value = await _channel.invokeMethod<bool>('setPipEnabled', enabled) ?? false;
   } on PlatformException { pipSupported.value = false; }
   on MissingPluginException { pipSupported.value = false; }
+}
+/// 背景執行：告訴 Android 端離開 App 時要不要啟動前景服務（保持連線、播放起步語音）
+Future<void> setBackgroundKeepAlive(bool want) async {
+  try {
+    await _channel.invokeMethod('setBackgroundKeepAlive', want);
+  } on PlatformException {
+    // best-effort
+  } on MissingPluginException {
+    // 測試 / 非 Android
+  }
 }
 Future<bool> isInPip() async {
   try { return await _channel.invokeMethod<bool>('isInPip') ?? false; }

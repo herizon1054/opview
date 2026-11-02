@@ -1,0 +1,3 @@
+# flutter test 的標籤宣告：golden 為截圖比對測試，CI 一般測試會用 --exclude-tags golden 略過
+tags:
+  golden:

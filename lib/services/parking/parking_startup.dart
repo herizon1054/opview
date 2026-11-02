@@ -113,8 +113,9 @@ class ParkingStartup extends ChangeNotifier {
           }
         },
       );
-      if (current())
+      if (current()) {
         status = '${parkingCities[city]}位置已更新：${cache.lots.length} 筆';
+      }
     } catch (e) {
       if (current()) status = '位置更新未完成：${e is StateError ? e.message : e}';
     } finally {

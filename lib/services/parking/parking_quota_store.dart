@@ -13,8 +13,9 @@ final parkingGate = ParkingRequestGate(
   write: (v) => _storage.write(key: 'opview_parking_gate_v3', value: v),
 );
 Future<File> _cacheFile(String key) async {
-  if (!RegExp(r'^parking_static_v3_[A-Za-z]+$').hasMatch(key))
+  if (!RegExp(r'^parking_static_v3_[A-Za-z]+$').hasMatch(key)) {
     throw const FormatException('cache key');
+  }
   final root = await getApplicationSupportDirectory();
   final folder = Directory('${root.path}/parking');
   await folder.create(recursive: true);

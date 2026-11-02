@@ -375,7 +375,18 @@ class ConnectionManager {
   }
 
   /// 影像卡住偵測：見檔案開頭 _stall* 常數說明
+  /// 背景執行中（app.dart）：畫面不繪製，解碼幀數可能下降，暫停影像卡住偵測，避免誤判重連打斷資料
+  bool _background = false;
+  set backgroundMode(bool on) {
+    if (_background == on) return;
+    _background = on;
+    _stallCount = 0;
+    _prevVideo = null;
+    _prevVideoUs = null;
+  }
+
   void _checkVideoStall(VideoCounters? now) {
+    if (_background) return;
     final prev = _prevVideo;
     _prevVideo = now;
     final sampleUs = _videoClock.elapsedMicroseconds;

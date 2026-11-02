@@ -29,3 +29,14 @@
 ## 編譯
 - 需要 `flutter pub get`：pubspec 新增了 logger，並使用 `third_party/flutter_webrtc`。
 - 修改是在沒有 Flutter SDK 的環境下完成的，只做過語法檢查。請先在 CI 跑 `flutter analyze` 和 `flutter test`。
+
+## v2.0（2026-11-02）
+以上為 v22 時的整理。v2.0 另外加入：
+- 前車起步偵測、綠燈起步偵測、車輛停等計時（直向、橫向）。
+- 提醒聲音：靜音／Google 語音／嗶嗶聲。
+- 背景執行（保留起步語音）。
+- leadOne 十字線、leadTwo 紅色箭頭。
+- 移除子母畫面。
+- flutter analyze 修正、GitHub Actions 修正（含選用的固定簽章）。
+
+完整功能說明見 [README.md](README.md)。

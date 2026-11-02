@@ -54,8 +54,9 @@ class ParkingLot {
   factory ParkingLot.fromJson(Map<String, dynamic> data) {
     final lat = (data['lat'] as num).toDouble(),
         lon = (data['lon'] as num).toDouble();
-    if (!lat.isFinite || !lon.isFinite || lat.abs() > 90 || lon.abs() > 180)
+    if (!lat.isFinite || !lon.isFinite || lat.abs() > 90 || lon.abs() > 180) {
       throw const FormatException('position');
+    }
     return ParkingLot(
       data['id'] as String,
       data['city'] as String,
@@ -76,12 +77,14 @@ class ParkingLot {
         !lon.isFinite ||
         lat.abs() > 90 ||
         lon.abs() > 180 ||
-        (lat == 0 && lon == 0))
+        (lat == 0 && lon == 0)) {
       return null;
+    }
     final id = data[onStreet ? 'ParkingSegmentID' : 'CarParkID'],
         city = data['City'];
-    if (id is! String || id.isEmpty || city is! String || city.isEmpty)
+    if (id is! String || id.isEmpty || city is! String || city.isEmpty) {
       return null;
+    }
     final n = data[onStreet ? 'ParkingSegmentName' : 'CarParkName'];
     return ParkingLot(
       id,
@@ -120,8 +123,9 @@ class ParkingAvailability {
       if (matches.length == 1) {
         final n = parkingInt(matches.single['AvailableSpaces']);
         final total = parkingInt(matches.single['NumberOfSpaces']);
-        if (n != null && n >= 0 && (total == null || total < 0 || n <= total))
+        if (n != null && n >= 0 && (total == null || total < 0 || n <= total)) {
           cars = n;
+        }
       }
     }
     final n = parkingInt(data['AvailableSpaces']);
@@ -142,8 +146,9 @@ class ParkingAvailability {
     if (reportWithoutTime && sourceTime == null) {
       if (receivedAt == null ||
           now.difference(receivedAt!).inSeconds < -60 ||
-          now.difference(receivedAt!).inSeconds > 300)
+          now.difference(receivedAt!).inSeconds > 300) {
         return '資料過期';
+      }
       return cars == null ? '無空位資料' : '回報 $cars 位*';
     }
     if (!fresh(now)) return sourceTime == null ? '時間不明' : '資料過期';

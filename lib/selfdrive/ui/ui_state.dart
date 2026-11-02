@@ -15,6 +15,24 @@ const kmToMile = 0.621371;
 const msToKph = 3.6;
 const msToMph = 2.23694;
 
+// -- radarState LeadData --
+// 有沒有前車：dragonpilot（dplcc / dp0111pre，舊 cereal）欄位叫 status，
+// sunnypilot / openpilot 新版 cereal 改名為 present（同一個欄位編號 @11）。兩個都認。
+bool leadPresent(Map<String, dynamic>? lead) =>
+    lead != null && (lead['status'] == true || lead['present'] == true);
+
+/// leadTwo 是否和 leadOne 是不同目標（opview 只在不同時畫紅色箭頭；與 model_renderer 的判斷相同）。
+/// openpilot 的 leadTwo 不是「第二台車」，而是模型「2 秒後的前車」預測（modelV2.leadsV3[1]）
+/// 配對到的目標，大多數時間就是 leadOne 那台車；只有切入、變換車道、前車離開等情況才會不同。
+bool leadTwoSeparate(Map<String, dynamic>? one, Map<String, dynamic>? two) {
+  if (!leadPresent(two)) return false;
+  if (!leadPresent(one)) return true;
+  final d1 = (one!['dRel'] as num?)?.toDouble(), y1 = (one['yRel'] as num?)?.toDouble();
+  final d2 = (two!['dRel'] as num?)?.toDouble(), y2 = (two['yRel'] as num?)?.toDouble();
+  if (d1 == null || y1 == null || d2 == null || y2 == null) return true;
+  return (d2 - d1).abs() >= 3 || (y2 - y1).abs() >= 1.5;
+}
+
 // -- engagement status (matches ui_state.py UIStatus) --
 
 enum UIStatus { disengaged, engaged, override_ }
@@ -36,7 +54,7 @@ class UIState extends ChangeNotifier {
   static const dataLagLimitMs = 1500;
   bool get dataLagging => isConnected && dataLagMs > dataLagLimitMs;
   double? get leadDistance {
-    if (leadOne?['status'] != true) return null;
+    if (!leadPresent(leadOne)) return null;
     if (lastRadarAt != null && DateTime.now().difference(lastRadarAt!).inMilliseconds > 2000) return null;
     final value = leadOne?['dRel'];
     if (value is! num || !value.isFinite || value <= 0) return null;
@@ -304,10 +322,31 @@ class UIState extends ChangeNotifier {
     // no notify — picked up on next modelV2
   }
 
+  // log：每 60 秒記錄一次前車資料統計，確認 leadOne / leadTwo 有沒有資料、leadTwo 多常和 leadOne 不同
+  int _leadMsgs = 0, _leadOneCount = 0, _leadTwoCount = 0, _leadTwoSeparateCount = 0;
+  String _leadField = '-';
+  DateTime? _leadStatsSince;
+
   void applyRadarState(Map<String, dynamic> data) {
-    lastRadarAt = DateTime.now();
+    final now = DateTime.now();
+    lastRadarAt = now;
     leadOne = data['leadOne'] as Map<String, dynamic>?;
     leadTwo = data['leadTwo'] as Map<String, dynamic>?;
+    _leadStatsSince ??= now;
+    _leadMsgs++;
+    if (leadPresent(leadOne)) _leadOneCount++;
+    if (leadPresent(leadTwo)) _leadTwoCount++;
+    if (leadTwoSeparate(leadOne, leadTwo)) _leadTwoSeparateCount++;
+    if (_leadField == '-' && leadOne != null) {
+      _leadField = leadOne!.containsKey('present') ? 'present'
+          : leadOne!.containsKey('status') ? 'status' : '無（看不出有沒有前車）';
+    }
+    if (now.difference(_leadStatsSince!).inSeconds >= 60) {
+      debugPrint('[opview] 前車資料（60 秒）：radarState $_leadMsgs 筆，有 leadOne $_leadOneCount、'
+          '有 leadTwo $_leadTwoCount（其中與 leadOne 不同、會畫紅色箭頭 $_leadTwoSeparateCount），欄位 $_leadField');
+      _leadMsgs = _leadOneCount = _leadTwoCount = _leadTwoSeparateCount = 0;
+      _leadStatsSince = now;
+    }
     // no notify — picked up on next modelV2
   }
 

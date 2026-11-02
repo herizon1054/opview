@@ -29,15 +29,17 @@ class ParkingRequestGate {
   Future<Map<String, dynamic>> _load() async {
     if (_state != null) return Map<String, dynamic>.from(_state!);
     final raw = await read();
-    if (raw == null)
+    if (raw == null) {
       return _state = {'requests': <int>[], 'clickUntil': 0, 'blockedUntil': 0};
+    }
     try {
       final s = Map<String, dynamic>.from(jsonDecode(raw) as Map);
       if (s['requests'] is! List ||
           (s['requests'] as List).any((e) => e is! int) ||
           s['clickUntil'] is! int ||
-          s['blockedUntil'] is! int)
+          s['blockedUntil'] is! int) {
         throw const FormatException();
+      }
       _state = s;
       return Map<String, dynamic>.from(s);
     } catch (_) {
@@ -95,16 +97,18 @@ class ParkingRequestGate {
   /// Static downloads and live requests share the same 5/minute local gate.
   Future<int> reserveData() => _serial(() async {
     final s = await _load(), now = clock().millisecondsSinceEpoch;
-    if (now < (s['blockedUntil'] as int))
+    if (now < (s['blockedUntil'] as int)) {
       return (s['blockedUntil'] as int) - now;
+    }
     final times =
         (s['requests'] as List)
             .cast<int>()
             .where((t) => now - t < 60000)
             .toList()
           ..sort();
-    if (times.length >= 5)
+    if (times.length >= 5) {
       return (times.first + 60001 - now).clamp(1, 86400000);
+    }
     times.add(now);
     s['requests'] = times;
     await _save(s);

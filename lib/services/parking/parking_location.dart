@@ -6,8 +6,9 @@ import 'parking_catalog.dart';
 Future<Position> parkingPosition() async {
   if (!await Geolocator.isLocationServiceEnabled()) throw StateError('請開啟手機定位');
   var permission = await Geolocator.checkPermission();
-  if (permission == LocationPermission.denied)
+  if (permission == LocationPermission.denied) {
     permission = await Geolocator.requestPermission();
+  }
   if (permission == LocationPermission.denied ||
       permission == LocationPermission.deniedForever) {
     throw StateError('請在手機設定允許位置權限');
@@ -47,8 +48,9 @@ Future<String> parkingCity(Position p, String override) async {
         if (area == e.value ||
             area.toLowerCase().replaceAll(' ', '') == e.key.toLowerCase() ||
             area.toLowerCase().replaceAll(' city', '').replaceAll(' ', '') ==
-                e.key.toLowerCase())
+                e.key.toLowerCase()) {
           return e.key;
+        }
       }
     }
   } catch (_) {

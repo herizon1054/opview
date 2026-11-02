@@ -82,8 +82,9 @@ class ParkingApi {
   }
 
   void _credentials(String id, String secret) {
-    if (id.trim().isEmpty || secret.trim().isEmpty)
+    if (id.trim().isEmpty || secret.trim().isEmpty) {
       throw ParkingApiError('必須填入 Client ID 與 Client Secret 才能使用停車查詢');
+    }
   }
 
   Future<ParkingStaticCache?> cached(String city) async {
@@ -91,8 +92,9 @@ class ParkingApi {
     if (raw == null) return null;
     try {
       final j = jsonDecode(raw) as Map;
-      if (j['v'] != 3 || j['city'] != city || j['complete'] != true)
+      if (j['v'] != 3 || j['city'] != city || j['complete'] != true) {
         return null;
+      }
       final lots = (j['lots'] as List)
           .map((x) => ParkingLot.fromJson(Map<String, dynamic>.from(x as Map)))
           .toList();
@@ -116,8 +118,9 @@ class ParkingApi {
       if (_token == null) {
         final raw = await readSecret('parking_token_v3');
         try {
-          if (raw != null)
+          if (raw != null) {
             _token = Map<String, dynamic>.from(jsonDecode(raw) as Map);
+          }
         } catch (_) {
           _token = null;
         }
@@ -220,8 +223,9 @@ class ParkingApi {
       const Duration(seconds: 15),
     )) {
       _check(gen);
-      if (bytes.length + chunk.length > 8 * 1024 * 1024)
+      if (bytes.length + chunk.length > 8 * 1024 * 1024) {
         throw ParkingApiError('單筆資料過大，已停止下載');
+      }
       bytes.addAll(chunk);
     }
     final text = utf8.decode(bytes).trimLeft();
@@ -320,8 +324,9 @@ class ParkingApi {
       _check(gen);
       final delay = await gate.reserveData();
       if (delay == 0) break;
-      if (!waitForSlot)
+      if (!waitForSlot) {
         throw ParkingGateError('本機每分鐘 5 筆節流，請等待 ${(delay / 1000).ceil()} 秒再查詢');
+      }
       progress?.call('靜態下載節流等待 ${(delay / 1000).ceil()} 秒…');
       // Short waits allow cancellation promptly, no background request retries.
       await sleep(Duration(milliseconds: math.min(delay, 1000)));
@@ -388,13 +393,14 @@ class ParkingApi {
         final key = '${parkingCities[city]} TDX ${kind.$1}';
         final supported = kind.$3.contains(city);
         results[key] = supported ? '尚未測試' : '未列入支援';
-        if (supported)
+        if (supported) {
           jobs.add((
             key: key,
             city: city,
             path: '/api/basic/v1/Parking/${kind.$2}/City/$city',
             live: kind.$4,
           ));
+        }
       }
       if (localParkingCities.contains(city)) {
         for (final live in [false, true]) {
@@ -509,8 +515,9 @@ class ParkingApi {
         ).add(const Duration(hours: 16));
       }
     }
-    if (last != null && clock().difference(last) < staticRefreshInterval)
+    if (last != null && clock().difference(last) < staticRefreshInterval) {
       return false;
+    }
     final cache = await cached(city);
     return cache == null ||
         clock().difference(cache.downloadedAt) >= staticRefreshInterval;
@@ -559,12 +566,14 @@ class ParkingApi {
           waitForSlot: true,
           progress: progress,
         );
-        if (data is! Map || data['Items'] is! List)
+        if (data is! Map || data['Items'] is! List) {
           throw ParkingApiError('TDX 靜態資料格式異常，舊快取保留');
+        }
         final items = data['Items'] as List;
         if (items.isEmpty) {
-          if (data['Count'] is int && skip < (data['Count'] as int))
+          if (data['Count'] is int && skip < (data['Count'] as int)) {
             throw ParkingApiError('靜態資料分頁不完整，舊快取保留');
+          }
           break;
         }
         for (final row in items) {
@@ -623,8 +632,9 @@ class ParkingApi {
   }) => _operation((gen) async {
     _credentials(id, secret);
     final cache = await cached(city);
-    if (cache == null)
+    if (cache == null) {
       throw ParkingApiError('尚無${parkingCities[city] ?? city}位置資料，請查看自動更新狀態');
+    }
     final sorted =
         cache.lots
             .where((e) => parkingDistance(lat, lon, e.lat, e.lon) <= radius)
@@ -655,13 +665,16 @@ class ParkingApi {
     final liveRequests = needed.length + (localGroup.isEmpty ? 0 : 1);
     final cooldown = await gate.remaining();
     final wait = await gate.remaining(dataSlots: liveRequests);
-    if (wait > cooldown)
+    if (wait > cooldown) {
       throw ParkingGateError('本機每分鐘 5 筆節流（位置資料剛更新），請等待 $wait 秒再查詢');
+    }
     await gate.beginClick();
-    if (candidates.isEmpty)
+    if (candidates.isEmpty) {
       return ParkingResult([], '目前範圍沒有已快取的停車場或路段', clock());
-    if (needed.isEmpty && localGroup.isEmpty)
+    }
+    if (needed.isEmpty && localGroup.isEmpty) {
       return ParkingResult(candidates, '此縣市的這類場地尚無動態空位資料', clock());
+    }
     // Auth failures must not suppress an independent local feed.
     final tokenFuture = needed.isEmpty
         ? Future<String>.value('')
@@ -676,8 +689,9 @@ class ParkingApi {
           .where((e) => e.onStreet == on && !e.isLocal)
           .toList();
       if (group.isEmpty) return null;
-      if (!(on ? onLiveCities : offLiveCities).contains(city))
+      if (!(on ? onLiveCities : offLiveCities).contains(city)) {
         return '${on ? '路邊' : '路外'}空位未提供';
+      }
       final idField = on ? 'ParkingSegmentID' : 'CarParkID';
       final filter = group
           .map((e) => "$idField eq '${e.id.replaceAll("'", "''")}'")
@@ -700,8 +714,9 @@ class ParkingApi {
           auth,
           gen,
         );
-        if (data is! Map || data['Items'] is! List)
+        if (data is! Map || data['Items'] is! List) {
           throw ParkingApiError('TDX 空位資料格式異常');
+        }
         final byId = {for (final lot in group) lot.id: lot};
         for (final row
             in (data['Items'] as List).whereType<Map<String, dynamic>>()) {
@@ -746,8 +761,9 @@ class ParkingApi {
       ).compareTo(parkingDistance(lat, lon, b.lat, b.lon)),
     );
     final notes = warnings.whereType<String>().toSet().toList();
-    if (clock().difference(cache.downloadedAt).inDays >= 7)
+    if (clock().difference(cache.downloadedAt).inDays >= 7) {
       notes.add('位置資料超過 7 天，請確認自動更新狀態');
+    }
     return ParkingResult(
       candidates,
       notes.isEmpty ? null : notes.join('；'),

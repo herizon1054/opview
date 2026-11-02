@@ -39,12 +39,13 @@ class _ParkingTestDialogState extends State<ParkingTestDialog>
         },
         progress: (message) {
           debugPrint('[parking-test] $message');
-          if (mounted)
+          if (mounted) {
             setState(
               () => _status = message == '測試已停止' && _stopReason != null
                   ? '測試已停止：$_stopReason'
                   : message,
             );
+          }
         },
       );
     } catch (_) {
@@ -71,8 +72,9 @@ class _ParkingTestDialogState extends State<ParkingTestDialog>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.hidden ||
         state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached)
+        state == AppLifecycleState.detached) {
       _stop('App 進入背景：${state.name}');
+    }
   }
 
   String get _report =>

@@ -6,11 +6,13 @@
 //   - 圖示改用程式繪製的台灣常見橫式三燈號誌（綠燈亮）與「前車＋向前箭頭」，不需要圖檔
 //     （spmaster 的 green_light.png / lead_depart.png 是 git LFS 指標檔，不是實際圖片）。
 //   - 文字改為中文；尺寸依畫面高度等比（sunnypilot 為固定 250 px 半徑）。
-//   - 有 comma 警示（alertSize != 0）時不顯示（同 sunnypilot 的 _allow_e2e_alerts）。
+//   - 有 comma 警示時：sunnypilot（_allow_e2e_alerts）會整個隱藏；opview 刻意不同——
+//     底部橫幅警示（small / mid，例如「自動煞車維持中」會在停等時一直顯示）時照常顯示，
+//     圓形往上移到道路畫面右上方，避開底部橫幅；只有全螢幕警示（full）才隱藏。
+//     聲音不受警示影響（由 app.dart 依偵測事件播放）。
 
 import 'dart:async';
 import 'dart:math' as math;
-import 'dart:ui' show FontFeature;
 import 'package:flutter/material.dart';
 import 'package:opview/selfdrive/ui/ui_state.dart';
 import 'package:opview/services/stop_go_alerts.dart';
@@ -49,7 +51,11 @@ class _StopGoOverlayState extends State<StopGoOverlay> {
   @override
   Widget build(BuildContext context) {
     final a = StopGoAlerts.instance;
-    if (widget.state.alertSize != 0) return const SizedBox.shrink();
+    final alertSize = widget.state.alertSize;
+    if (alertSize >= 3) return const SizedBox.shrink(); // 全螢幕警示：蓋住整個畫面，不顯示
+    // 底部橫幅警示（small / mid）顯示中：圓形往上移，避開底部橫幅
+    // （橫向 390 dp 高：圓形 85–233、mid 橫幅約 271 起；直向影像 244 dp 高：圓形 49–153、橫幅約 185 起）
+    final avoidBanner = alertSize != 0;
     final alert = a.activeAlert;
     final standstill = a.standstillSeconds;
     if (alert == null && standstill == null) return const SizedBox.shrink();
@@ -79,7 +85,7 @@ class _StopGoOverlayState extends State<StopGoOverlay> {
       ]);
     }
     return Align(
-      alignment: const Alignment(.82, .08),
+      alignment: Alignment(.82, avoidBanner ? -.3 : .08),
       child: IgnorePointer(child: Container(
         width: r * 2, height: r * 2,
         decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xBE000000),

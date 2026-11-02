@@ -50,11 +50,12 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
         _ready = true;
       });
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _ready = true;
           _error = '設定讀取失敗，請重新設定';
         });
+      }
     }
   }
 
@@ -74,11 +75,12 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
       );
       if (mounted) Navigator.pop(context);
     } catch (_) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _saving = false;
           _error = '無法儲存設定';
         });
+      }
     }
   }
 

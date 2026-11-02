@@ -37,8 +37,9 @@ void main() {
       );
       await tester.pump();
       expect(tester.takeException(), isNull);
-      if (height >= 300)
+      if (height >= 300) {
         expect(find.textContaining('請先設定 TDX 金鑰'), findsWidgets);
+      }
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(seconds: 16));
       expect(tester.takeException(), isNull);

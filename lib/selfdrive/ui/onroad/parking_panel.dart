@@ -91,11 +91,12 @@ class _ParkingPanelState extends State<ParkingPanel>
       _foreground = false;
       _generation++;
       if (_busy) parkingApi.cancel();
-      if (mounted)
+      if (mounted) {
         setState(() {
           _busy = false;
           _message = '已暫停，回到前景後可手動查詢';
         });
+      }
     } else if (state == AppLifecycleState.resumed) {
       _foreground = true;
       _countdown();
@@ -109,8 +110,9 @@ class _ParkingPanelState extends State<ParkingPanel>
         _startup.busy ||
         _busy ||
         !_foreground ||
-        _remaining > 0)
+        _remaining > 0) {
       return;
+    }
     final gen = ++_generation;
     bool current() => mounted && gen == _generation && _foreground;
     setState(() {
@@ -152,11 +154,12 @@ class _ParkingPanelState extends State<ParkingPanel>
         _message = result.warning ?? '本次位置的直線距離 · 點右側箭頭導航';
       });
     } catch (e) {
-      if (current())
+      if (current()) {
         setState(
           () =>
               _message = e is StateError ? e.message.toString() : e.toString(),
         );
+      }
     } finally {
       if (current()) {
         setState(() => _busy = false);
@@ -182,8 +185,9 @@ class _ParkingPanelState extends State<ParkingPanel>
       'travelmode': 'driving',
     });
     try {
-      if (!await launchUrl(url, mode: LaunchMode.externalApplication))
+      if (!await launchUrl(url, mode: LaunchMode.externalApplication)) {
         throw StateError('navigation');
+      }
     } catch (_) {
       if (mounted) setState(() => _message = '無法開啟導航：${lot.lat}, ${lot.lon}');
     }
@@ -287,7 +291,7 @@ class _ParkingPanelState extends State<ParkingPanel>
                   : !_config.hasCredentials
                   ? '必須填入 Client ID 與 Client Secret'
                   : _startup.busy || _result == null
-                  ? _startup.status + ' · ' + _message
+                  ? '${_startup.status} · $_message'
                   : _message,
               maxLines: compact ? 1 : 2,
               overflow: TextOverflow.ellipsis,
@@ -318,7 +322,7 @@ class _ParkingPanelState extends State<ParkingPanel>
                           final label = switch (rawLabel) {
                             null || '無空位資料' || '空位未知' => '無資料',
                             '汽車已滿' => '無空位',
-                            _ => rawLabel!.replaceFirstMapped(
+                            _ => rawLabel.replaceFirstMapped(
                               RegExp(r'^汽車 (\d+) 位$'),
                               (m) => '剩餘 ${m[1]} 格',
                             ),

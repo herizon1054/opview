@@ -34,6 +34,8 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
   StreamSubscription<StopGoKind>? _stopGoSub;
   int _lifecycleEpoch = 0;
   AppLifecycleState _lifecycle = AppLifecycleState.resumed;
+  bool _inBackground = false; // 背景執行中（保持連線、播放起步語音）
+  bool? _bgWishSent;
 
   void _updatePipOffer() {
     // 主畫面不提供子母畫面（只在 opview 畫面）
@@ -49,6 +51,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     _uiState.modernOverlay = _settings.layout != ViewerLayout.classic;
     StopGoAlerts.instance.configure(greenLight: _settings.greenLightAlert,
         leadDepart: _settings.leadDepartAlert, standstillTimer: _settings.standstillTimer);
+    _syncBackgroundWish();
     LineNotifications.instance.setEnabled(_settings.lineNotify);
     _uiState.notifyNow();
     _updatePipOffer();
@@ -62,11 +65,42 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
       Future<void>.delayed(const Duration(milliseconds: 250), () {
         if (mounted && epoch == _lifecycleEpoch && !system.pipMode.value &&
             _lifecycle == AppLifecycleState.paused) {
-          _pauseStream();
+          if (!_inBackground) _pauseStream();
         }
       });
     }
   }
+  // ---- 背景執行（保留綠燈起步 / 前車起步語音）----
+  // 條件：顯示設定「背景執行」開啟、在 opview 畫面、前車或綠燈起步偵測至少一項開啟、聲音不是靜音。
+  // 符合時離開 App 不中斷連線（不呼叫 _pauseStream），Android 端啟動前景服務避免被系統凍結；
+  // 不符合時維持原行為：離開 App 就暫停串流，回來再重連。
+  bool get _wantBackground =>
+      _settings.backgroundRun &&
+      !_onHome &&
+      (_settings.greenLightAlert || _settings.leadDepartAlert) &&
+      _settings.alertSound != AlertSoundMode.mute;
+
+  void _syncBackgroundWish() {
+    final want = _wantBackground;
+    if (want == _bgWishSent) return;
+    _bgWishSent = want;
+    system.setBackgroundKeepAlive(want);
+  }
+
+  void _enterBackground() {
+    if (_inBackground) return;
+    _inBackground = true;
+    _connectionManager.backgroundMode = true;
+    debugPrint('[opview] 背景執行：保持連線，綠燈起步 / 前車起步照常播放語音');
+  }
+
+  void _leaveBackground() {
+    if (!_inBackground) return;
+    _inBackground = false;
+    _connectionManager.backgroundMode = false;
+    debugPrint('[opview] 背景執行結束：回到前景');
+  }
+
   void _pauseStream() {
     if (_streamPaused) return;
     _streamPaused = true;
@@ -78,6 +112,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     debugPrint('[opview] → home');
     setState(() => _onHome = true);
     _connectionManager.setStreaming(false);
+    _syncBackgroundWish();
     _updatePipOffer();
   }
   void _enterOpview() {
@@ -85,12 +120,14 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     debugPrint('[opview] → opview view');
     setState(() => _onHome = false);
     _connectionManager.setStreaming(true);
+    _syncBackgroundWish();
     _updatePipOffer();
   }
   Future<void> _loadSettings() async {
     await _settings.load();
     _onHome = !_settings.autoEnterOpview;
     _connectionManager.setStreaming(!_onHome);
+    _syncBackgroundWish();
     if (mounted) setState(() => _ready = true);
   }
 
@@ -115,6 +152,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     _stopGoSub?.cancel();
+    system.setBackgroundKeepAlive(false);
     WidgetsBinding.instance.removeObserver(this);
     _lifecycleEpoch++;
     _uiState.removeListener(_updatePipOffer);
@@ -134,11 +172,16 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     debugPrint('[opview] lifecycle ${state.name}');
     _lifecycle = state;
     final epoch = ++_lifecycleEpoch;
+    if (state == AppLifecycleState.resumed) _leaveBackground();
     if (state == AppLifecycleState.resumed && _streamPaused) {
       _streamPaused = false;
       _connectionManager.reconnect(automatic: true);
       _updatePipOffer();
     } else if (state == AppLifecycleState.paused) {
+      if (_wantBackground) {
+        _enterBackground();
+        return;
+      }
       // Query native state to avoid racing the PiP callback while entering PiP.
       system.isInPip().then((pip) {
         if (!mounted || epoch != _lifecycleEpoch) return;

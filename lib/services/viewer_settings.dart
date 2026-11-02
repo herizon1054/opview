@@ -17,6 +17,7 @@ class ViewerSettings extends ChangeNotifier {
   bool greenLightAlert = false;
   bool standstillTimer = false;
   AlertSoundMode alertSound = AlertSoundMode.mute; // 預設靜音
+  bool backgroundRun = true; // 背景執行：離開 App 時保留起步語音（見 app.dart _wantBackground）
   bool lineNotify = false; // 直向下方顯示 LINE 通知（需通知存取權）
   double? brightness;
   int hudEvery = 4; // HUD ~5 Hz when modelV2 is 20 Hz; path and alerts unchanged.
@@ -40,6 +41,7 @@ class ViewerSettings extends ChangeNotifier {
     standstillTimer = prefs.getBool('viewer_standstill_timer') ?? false;
     final snd = prefs.getString('viewer_alert_sound');
     alertSound = AlertSoundMode.values.firstWhere((e) => e.name == snd, orElse: () => AlertSoundMode.mute);
+    backgroundRun = prefs.getBool('viewer_background_run') ?? true;
     lineNotify = prefs.getBool('viewer_line_notify') ?? false;
     final b = prefs.getDouble('viewer_brightness');
     brightness = b != null && b.isFinite && b >= 0 ? b.clamp(.05, 1.0).toDouble() : null;
@@ -76,6 +78,9 @@ class ViewerSettings extends ChangeNotifier {
   }
   void setAlertSound(AlertSoundMode value) {
     alertSound = value; _prefs?.setString('viewer_alert_sound', value.name); notifyListeners();
+  }
+  void setBackgroundRun(bool value) {
+    backgroundRun = value; _prefs?.setBool('viewer_background_run', value); notifyListeners();
   }
   void setPip(bool value) {
     pictureInPicture = value; _prefs?.setBool('viewer_pip', value); notifyListeners();

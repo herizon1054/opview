@@ -87,6 +87,22 @@ class ViewerSettingsDialog extends StatelessWidget {
               onPressed: settings.alertSound == AlertSoundMode.mute ? null
                   : () => playStopGoSound(StopGoKind.leadDepart, settings.alertSound)),
           ]),
+          // 試聽結果：例如「媒體音量 0/15（靜音…）」「手機沒有中文語音資料…」，方便現場判斷沒聲音的原因
+          ValueListenableBuilder<String?>(valueListenable: lastAlertSoundStatus,
+            builder: (context, s, _) => s == null || settings.alertSound == AlertSoundMode.mute
+                ? const SizedBox.shrink()
+                : Text('試聽結果：$s', style: const TextStyle(fontSize: 12, color: Colors.white54))),
+          if (settings.alertSound == AlertSoundMode.voice)
+            const Text('Google 語音使用手機 Google 文字轉語音的台灣中文預設聲音；'
+              '男聲或女聲由系統決定，要換聲音請到系統「文字轉語音」設定更改。',
+              style: TextStyle(fontSize: 12, color: Colors.white54)),
+          SwitchListTile(contentPadding: EdgeInsets.zero,
+            secondary: const Icon(Icons.play_circle_outline),
+            title: const Text('背景執行（保留起步語音）'),
+            subtitle: const Text('在 opview 畫面切到其他 App 或關閉螢幕時，繼續連線並播放前車起步、綠燈起步語音'
+              '（需開啟其中一項偵測、聲音不是靜音）。通知列會顯示「opview 背景執行中」，可按「停止」結束；'
+              '耗電與流量和前景相同。小米等手機請把 opview 的省電策略設為「無限制」。'),
+            value: settings.backgroundRun, onChanged: settings.setBackgroundRun),
           if (system.brightnessSupported.value)
           SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('亮度跟隨系統'),
             value: settings.brightness == null,

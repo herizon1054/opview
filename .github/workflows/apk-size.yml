@@ -1,16 +1,30 @@
+# APK Size：PR 時分別建置目標分支與 PR 的 APK，在 PR 留言比較大小
 name: APK Size
 
 on:
   pull_request:
-    branches: [20261027]
+
+concurrency:
+  group: apk-size-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: 3.38.x
 
 jobs:
-  build-base:
+  build:
+    strategy:
+      matrix:
+        include:
+          - which: base
+            ref: ${{ github.base_ref }}
+          - which: pr
+            ref: ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: main
+          ref: ${{ matrix.ref }}
 
       - uses: actions/setup-java@v5
         with:
@@ -20,6 +34,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - run: flutter pub get
@@ -28,45 +43,23 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: base-apk
+          name: ${{ matrix.which }}-apk
           path: build/app/outputs/flutter-apk/app-release.apk
-
-  build-pr:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - run: flutter pub get
-
-      - run: flutter build apk --release
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: pr-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 3
 
   compare:
-    needs: [build-base, build-pr]
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: base-apk
           path: base
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: pr-apk
           path: pr
@@ -88,7 +81,7 @@ jobs:
               '',
               '| | Size |',
               '|---|---|',
-              `| main | ${fmt(base)} |`,
+              `| ${context.payload.pull_request.base.ref} | ${fmt(base)} |`,
               `| PR | ${fmt(pr)} |`,
               `| diff | ${sign}${fmt(diff)} |`,
             ].join('\n');
@@ -97,18 +90,10 @@ jobs:
               ...context.repo,
               issue_number: context.issue.number,
             });
-            const existing = comments.find(c => c.body.includes('**APK Size**'));
+            const existing = comments.find(c => c.body?.includes('**APK Size**'));
 
             if (existing) {
-              await github.rest.issues.updateComment({
-                ...context.repo,
-                comment_id: existing.id,
-                body,
-              });
+              await github.rest.issues.updateComment({ ...context.repo, comment_id: existing.id, body });
             } else {
-              await github.rest.issues.createComment({
-                ...context.repo,
-                issue_number: context.issue.number,
-                body,
-              });
+              await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number, body });
             }

@@ -11,7 +11,7 @@
 //       selfdriveState.enabled（取代 carControl.enabled）。
 //   - sunnypilot 以 modelV2 幀數（DT_MDL = 0.05 s）累計時間；opview 改用手機單調時鐘的實際間隔
 //     （每次最多算 0.2 s），手機合併 / 丟棄舊訊息時計時仍正確。超過 2 秒沒有資料（斷線）就整個重置。
-//   - leadOne 是否存在：sunnypilot 用 leadOne.present，cereal 標準欄位為 leadOne.status，這裡用 status。
+//   - leadOne 是否存在：dragonpilot 的 cereal 欄位為 status，sunnypilot / 新版 openpilot 為 present，兩個都認（leadPresent）。
 //
 // 只在 openpilot 未啟用、停車中時運作（與 sunnypilot 相同：allowed = 靜止 && 沒踩油門 && 未啟用 && 2 秒內沒移動）。
 // 提醒僅供參考，起步前仍須駕駛自行確認路況。
@@ -121,7 +121,7 @@ class StopGoAlerts extends ChangeNotifier {
     }
 
     final lead = s.leadOne;
-    final hasLead = lead?['status'] == true;
+    final hasLead = leadPresent(lead);
     final dRel = (lead?['dRel'] as num?)?.toDouble() ?? double.infinity;
     final modelX = s.pathX;
     final farX = modelX.isEmpty ? 0.0 : modelX.last;

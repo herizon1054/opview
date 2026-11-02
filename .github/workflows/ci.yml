@@ -1,14 +1,27 @@
+# CI：每次推送（任何分支）或 PR 都會執行
+#   test           flutter analyze（info 不擋、warning / error 會失敗）＋ flutter test（略過 golden 截圖測試）
+#   build-android  建置 release APK，上傳到這次執行的 Artifacts（下載後解壓縮即可安裝）
+#   build-ios      只在手動執行（Run workflow）時才跑；macOS 執行時間在私人 repo 以 10 倍計算，失敗也不影響整體結果
 name: CI
 
 on:
   push:
-    branches: [opview-uber]
+    branches: ['**']
+    paths-ignore: ['**.md', 'docs/**', 'LICENSE', 'THIRD_PARTY_LICENSES']
   pull_request:
-    branches: [opview-uber]
   workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # pubspec.lock 需要 Flutter >= 3.38.4；固定 3.38.x，避免 stable 更新後 Gradle / AGP 不相容
+  FLUTTER_VERSION: 3.38.x
 
 jobs:
   test:
+    name: 靜態分析與測試
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -16,7 +29,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.38.x   # pin: pubspec.lock needs >=3.38.4; newer Flutter breaks AGP 8.7 / Gradle 8.9
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - run: flutter pub get
@@ -26,7 +39,14 @@ jobs:
       - run: flutter test --exclude-tags golden
 
   build-android:
+    name: 建置 Android APK
     runs-on: ubuntu-latest
+    env:
+      # 選用：設定這 4 個 repository secrets 後，每次建置都用同一把金鑰簽章，可直接覆蓋安裝舊版
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v6
 
@@ -38,27 +58,48 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.38.x   # pin: pubspec.lock needs >=3.38.4; newer Flutter breaks AGP 8.7 / Gradle 8.9
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+
+      - name: 設定固定簽章（有設定 secrets 才執行）
+        if: env.ANDROID_KEYSTORE_BASE64 != ''
+        run: bash scripts/ci_signing.sh
 
       - run: flutter pub get
 
       - run: flutter build apk --release
 
+      - name: 整理 APK
+        run: |
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk "dist/opview-${GITHUB_SHA::7}.apk"
+          {
+            echo "### APK"
+            echo "- 分支：\`${GITHUB_REF_NAME}\`，commit：\`${GITHUB_SHA::7}\`"
+            if [ -f android/key.properties ]; then echo "- 簽章：固定金鑰（可覆蓋安裝）"
+            else echo "- 簽章：CI 臨時 debug 金鑰（每次不同，安裝前需先移除舊版；設定方式見 README）"; fi
+            echo "- 大小：$(du -h dist/*.apk | cut -f1)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - uses: actions/upload-artifact@v7
         with:
-          name: opview-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: opview-apk-${{ github.run_number }}
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 14
 
   build-ios:
+    name: 建置 iOS（手動、不簽章）
+    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v6
 
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.38.x   # pin: pubspec.lock needs >=3.38.4; newer Flutter breaks AGP 8.7 / Gradle 8.9
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
 
       - run: flutter pub get

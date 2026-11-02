@@ -202,7 +202,7 @@ class ModelRendererPainter extends CustomPainter {
     double? oneD, oneY; // leadOne 位置（leadTwo 與它重疊時不畫箭頭）
     for (var li = 0; li < leads.length; li++) {
       final lead = leads[li];
-      if (lead == null || lead['status'] != true) continue;
+      if (lead == null || !leadPresent(lead)) continue;
 
       final dRel = (lead['dRel'] as num?)?.toDouble();
       final vRel = (lead['vRel'] as num?)?.toDouble() ?? 0;

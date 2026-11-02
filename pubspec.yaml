@@ -1,7 +1,7 @@
 name: opview
 description: openpilot onroad UI over WebRTC
 publish_to: 'none'
-version: 0.1.1
+version: 2.0.0+200  # v2.0（Android versionName 2.0：結尾 .0 省略，見 android/app/build.gradle；versionCode 200）
 
 environment:
   sdk: ^3.6.2
@@ -29,3 +29,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # 起步提醒的嗶嗶聲（beep.wav）；Google 語音用手機的文字轉語音，不需要音檔
+  assets:
+    - assets/sounds/

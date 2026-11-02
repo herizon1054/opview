@@ -121,55 +121,242 @@ class MainActivity: FlutterActivity() {
 
     // ---- 起步提醒聲音 ----
     // 語音：TextToSpeech，優先使用 Google 文字轉語音引擎（com.google.android.tts），語言 zh-TW；
-    // 選用 Google 台灣中文的預設聲音（女聲）。音訊用途設為導航語音：播放時系統會壓低音樂音量。
+    // 使用 Google 台灣中文的預設聲音（男聲或女聲依系統「文字轉語音」設定）。音訊用途設為導航語音：播放時系統會壓低音樂音量。
     private var tts: android.speech.tts.TextToSpeech? = null
     private var ttsReady = false
     private var pendingSpeech: String? = null
 
-    private fun speakAlert(text: String) {
-        if (text.isEmpty()) return
+    // Android 11 以上（targetSdk 30+）：AndroidManifest 必須在 <queries> 宣告 TTS_SERVICE，
+    // 否則看不到任何文字轉語音引擎 → TextToSpeech 初始化失敗、完全沒有語音（v30 以前的問題）。
+    private var ttsNoChinese = false
+    private var ttsEngine = "-"
+
+    /** 回傳目前狀態（給 Dart 寫入 log、顯示在試聽按鈕下方） */
+    private fun speakAlert(text: String): String {
+        if (text.isEmpty()) return "沒有文字"
         val t = tts
         if (t == null) {
             pendingSpeech = text
             val listener = android.speech.tts.TextToSpeech.OnInitListener { status ->
                 if (status == android.speech.tts.TextToSpeech.SUCCESS) {
                     tts?.let { e ->
-                        e.setLanguage(java.util.Locale.TAIWAN)
+                        val tw = e.setLanguage(java.util.Locale.TAIWAN)
+                        var lang = "zh-TW"
+                        if (tw < android.speech.tts.TextToSpeech.LANG_AVAILABLE) {
+                            val zh = e.setLanguage(java.util.Locale.CHINESE)
+                            lang = if (zh >= android.speech.tts.TextToSpeech.LANG_AVAILABLE) "中文（沒有台灣中文，用一般中文）"
+                                   else "沒有中文語音資料（zh-TW=$tw, zh=$zh）"
+                            ttsNoChinese = zh < android.speech.tts.TextToSpeech.LANG_AVAILABLE
+                        }
                         e.setAudioAttributes(android.media.AudioAttributes.Builder()
                             .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
                             .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                        e.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                            override fun onStart(utteranceId: String?) {}
+                            override fun onDone(utteranceId: String?) {}
+                            @Deprecated("Deprecated in Java")
+                            override fun onError(utteranceId: String?) { onSpeechError("onError") }
+                            override fun onError(utteranceId: String?, errorCode: Int) { onSpeechError("錯誤碼 $errorCode") }
+                        })
                         ttsReady = true
-                        pendingSpeech?.let { p -> e.speak(p, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "opview-stopgo") }
-                        pendingSpeech = null
+                        nativeLog("提醒聲音：文字轉語音就緒（引擎 $ttsEngine，語言 $lang）")
+                        if (ttsNoChinese) {
+                            nativeLog("提醒聲音：手機沒有中文語音資料，改播嗶嗶聲；請到系統「文字轉語音」下載中文（台灣）語音")
+                            pendingSpeech = null
+                            beepFallback()
+                        } else {
+                            pendingSpeech?.let { p -> e.speak(p, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "opview-stopgo") }
+                            pendingSpeech = null
+                        }
                     }
                 } else {
-                    // 沒有可用的語音引擎：改用嗶嗶聲
+                    // 沒有可用的語音引擎：改用嗶嗶聲，下次再重新初始化
+                    nativeLog("提醒聲音：文字轉語音初始化失敗（status=$status，引擎 $ttsEngine），改播嗶嗶聲")
                     pendingSpeech = null
-                    beepAlert()
+                    try { tts?.shutdown() } catch (_: Exception) {}
+                    tts = null
+                    ttsReady = false
+                    beepFallback()
                 }
             }
             val google = "com.google.android.tts"
             val hasGoogle = try { packageManager.getPackageInfo(google, 0); true } catch (e: Exception) { false }
+            ttsEngine = if (hasGoogle) google else "系統預設"
             tts = if (hasGoogle) android.speech.tts.TextToSpeech(this, listener, google)
                   else android.speech.tts.TextToSpeech(this, listener)
-            return
+            return "語音引擎初始化中（$ttsEngine），完成後播放"
         }
-        if (ttsReady) t.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "opview-stopgo")
-        else pendingSpeech = text
+        if (!ttsReady) {
+            pendingSpeech = text
+            return "語音引擎初始化中（$ttsEngine），完成後播放"
+        }
+        if (ttsNoChinese) {
+            val err = beepFallback()
+            return "手機沒有中文語音資料，改播嗶嗶聲" + (err?.let { "（$it）" } ?: "")
+        }
+        val r = t.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "opview-stopgo")
+        return if (r == android.speech.tts.TextToSpeech.SUCCESS) "語音播放中（$ttsEngine）"
+               else { beepFallback(); "語音播放失敗（speak=$r），改播嗶嗶聲" }
     }
 
-    // 嗶嗶聲：ToneGenerator 雙短音（通知音量）
-    private fun beepAlert() {
-        try {
-            val tg = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 90)
-            tg.startTone(android.media.ToneGenerator.TONE_PROP_BEEP2, 400)
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ tg.release() }, 800)
-        } catch (e: Exception) {
-            // 部分機型同時只能有少數 ToneGenerator：略過
+    private fun onSpeechError(why: String) {
+        runOnUiThread {
+            nativeLog("提醒聲音：語音播放失敗（$why），改播嗶嗶聲")
+            beepFallback()
         }
+    }
+
+    // ---- 嗶嗶聲 WAV ----
+    // 嗶嗶聲播放 App 內建的 assets/sounds/beep.wav（Flutter asset），失敗時改用程式產生的短音（beepAlert）。
+    // Google 語音不使用音檔（speakAlert）。
+    private var wavPlayer: android.media.MediaPlayer? = null
+
+    /** 播放 Flutter asset 的 WAV；成功回傳 null，失敗回傳原因 */
+    private fun playAssetWav(asset: String): String? {
+        val key = try {
+            io.flutter.FlutterInjector.instance().flutterLoader().getLookupKeyForAsset(asset)
+        } catch (e: Exception) { return "找不到 Flutter asset 路徑：${e.message}" }
+        val mp = android.media.MediaPlayer()
+        return try {
+            mp.setAudioAttributes(android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
+            try {
+                assets.openFd(key).use { afd -> mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length) }
+            } catch (e: java.io.FileNotFoundException) {
+                mp.release()
+                return "沒有 $asset"
+            } catch (e: java.io.IOException) {
+                // APK 裡被壓縮（一般 wav 不會）：複製到快取再播
+                val f = File(cacheDir, asset.substringAfterLast('/'))
+                assets.open(key).use { input -> f.outputStream().use { input.copyTo(it) } }
+                mp.setDataSource(f.absolutePath)
+            }
+            mp.setOnCompletionListener { p -> p.release(); if (wavPlayer === p) wavPlayer = null }
+            mp.setOnErrorListener { p, what, extra ->
+                nativeLog("提醒聲音：$asset 播放錯誤（$what/$extra）")
+                p.release(); if (wavPlayer === p) wavPlayer = null
+                true
+            }
+            mp.prepare()
+            wavPlayer?.let { try { it.stop() } catch (_: Exception) {}; it.release() }
+            wavPlayer = mp
+            mp.start()
+            null
+        } catch (e: Exception) {
+            try { mp.release() } catch (_: Exception) {}
+            "${e.javaClass.simpleName}: ${e.message}"
+        }
+    }
+
+    /** 語音失敗時的嗶嗶聲：先播 beep.wav，失敗再用程式產生的短音；成功回傳 null */
+    private fun beepFallback(): String? = playAssetWav("assets/sounds/beep.wav")?.let { beepAlert() }
+
+    /** 媒體音量（語音、嗶嗶聲都用導航語音用途，跟著媒體音量） */
+    private fun mediaVolumeNote(): String = try {
+        val am = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
+        val v = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
+        val m = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+        if (v == 0) "媒體音量 0/$m（靜音，聽不到，請調高媒體音量）" else "媒體音量 $v/$m"
+    } catch (_: Exception) { "媒體音量未知" }
+
+    // 嗶嗶聲：程式產生兩聲 1 kHz 短音（各 130 ms，間隔 90 ms），用 AudioTrack 播放。
+    // 音訊用途與語音相同（導航語音），音量跟著「媒體音量」，聽得到語音就聽得到嗶聲。
+    // （原本用 ToneGenerator＋通知音量：通知音量為 0、勿擾模式、部分機型會完全沒有聲音。）
+    private var beepTrack: android.media.AudioTrack? = null
+
+    /** 成功回傳 null，失敗回傳原因（交給 Dart 寫入 log） */
+    private fun beepAlert(): String? {
+        return try {
+            val rate = 44100
+            val beepN = rate * 130 / 1000
+            val gapN = rate * 90 / 1000
+            val total = beepN * 2 + gapN
+            val fade = rate * 5 / 1000.0 // 前後 5 ms 淡入淡出，避免爆音
+            val pcm = ShortArray(total)
+            for (b in 0 until 2) {
+                val off = b * (beepN + gapN)
+                for (i in 0 until beepN) {
+                    val env = minOf(1.0, i / fade, (beepN - 1 - i) / fade)
+                    pcm[off + i] = (Math.sin(2.0 * Math.PI * 1000.0 * i / rate) * env * 0.8 * Short.MAX_VALUE)
+                        .toInt().toShort()
+                }
+            }
+            beepTrack?.release()
+            beepTrack = null
+            val attrs = android.media.AudioAttributes.Builder()
+                .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
+            val format = android.media.AudioFormat.Builder()
+                .setSampleRate(rate)
+                .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)
+                .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO).build()
+            val track = android.media.AudioTrack(attrs, format, total * 2,
+                android.media.AudioTrack.MODE_STATIC, android.media.AudioManager.AUDIO_SESSION_ID_GENERATE)
+            val written = track.write(pcm, 0, total)
+            if (written != total || track.state != android.media.AudioTrack.STATE_INITIALIZED) {
+                track.release()
+                return "AudioTrack 初始化失敗（write=$written, state=${track.state}）"
+            }
+            track.play()
+            beepTrack = track
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                if (beepTrack === track) beepTrack = null
+                track.release()
+            }, total * 1000L / rate + 300)
+            null
+        } catch (e: Exception) {
+            "嗶嗶聲播放失敗：${e.javaClass.simpleName} ${e.message}"
+        }
+    }
+
+    // ---- 背景執行（保留起步語音）----
+    // Dart 端（app.dart）在 opview 畫面、背景執行開啟、起步提醒有開且聲音不是靜音時設為 true。
+    // 離開 App（onPause，此時 Activity 仍可見，Android 12+ 允許啟動前景服務）啟動 OpviewKeepAliveService，
+    // 回到 App（onResume）就停止。
+    private var keepAliveWanted = false
+
+    private fun nativeLog(msg: String) {
+        try { systemChannel?.invokeMethod("nativeLog", msg) } catch (_: Exception) {}
+    }
+
+    override fun onPause() {
+        super.onPause()
+        if (keepAliveWanted && !isFinishing) {
+            val err = OpviewKeepAliveService.start(this)
+            nativeLog(if (err == null) "背景執行：啟動前景服務（通知列顯示 opview 背景執行中）"
+                      else "背景執行：前景服務啟動失敗 $err")
+            if (err == null) {
+                // startForeground 在服務內執行，結果稍後確認
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    OpviewKeepAliveService.lastError?.let { nativeLog("背景執行：$it") }
+                }, 1500)
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (OpviewKeepAliveService.running) nativeLog("背景執行：回到 App，停止前景服務")
+        OpviewKeepAliveService.stop(this)
+    }
+
+    // Android 13+：前景服務的通知需要通知權限（沒有權限服務照樣運作，只是通知列看不到）。只詢問一次。
+    private fun askNotificationPermissionOnce() {
+        if (Build.VERSION.SDK_INT < 33) return
+        if (checkSelfPermission("android.permission.POST_NOTIFICATIONS") == PackageManager.PERMISSION_GRANTED) return
+        val prefs = getSharedPreferences("opview_native", MODE_PRIVATE)
+        if (prefs.getBoolean("asked_post_notifications", false)) return
+        prefs.edit().putBoolean("asked_post_notifications", true).apply()
+        try { requestPermissions(arrayOf("android.permission.POST_NOTIFICATIONS"), 7301) } catch (_: Exception) {}
     }
 
     override fun onDestroy() {
+        OpviewKeepAliveService.stop(this)
+        wavPlayer?.release()
+        wavPlayer = null
+        beepTrack?.release()
+        beepTrack = null
         tts?.shutdown()
         tts = null
         ttsReady = false
@@ -434,11 +621,25 @@ class MainActivity: FlutterActivity() {
                     } catch (e: Exception) { result.success(false) }
                 }
                 // 前車起步 / 綠燈起步提醒聲音：{mode: voice|beep, text}
+                "setBackgroundKeepAlive" -> {
+                    keepAliveWanted = call.arguments as? Boolean ?: false
+                    if (keepAliveWanted) askNotificationPermissionOnce()
+                    result.success(true)
+                }
                 "alertSound" -> {
                     val mode = call.argument<String>("mode") ?: "beep"
                     val text = call.argument<String>("text") ?: ""
-                    if (mode == "voice") speakAlert(text) else beepAlert()
-                    result.success(true)
+                    val vol = mediaVolumeNote()
+                    if (mode == "voice") {
+                        result.success("Google 語音：${speakAlert(text)}；$vol")
+                    } else {
+                        val asset = call.argument<String>("asset") ?: "assets/sounds/beep.wav"
+                        val wavErr = playAssetWav(asset)
+                        if (wavErr == null) { result.success("嗶嗶聲（beep.wav）播放中；$vol"); return@setMethodCallHandler }
+                        val err = beepAlert()
+                        if (err == null) result.success("$wavErr → 程式產生的嗶嗶聲已播放；$vol")
+                        else result.error("beep", "$wavErr；$err；$vol", null)
+                    }
                 }
                 "isInPip" -> result.success(
                     Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode)

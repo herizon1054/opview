@@ -8,7 +8,8 @@
 //   - 文字改為中文；尺寸依畫面高度等比（sunnypilot 為固定 250 px 半徑）。
 //   - 有 comma 警示時：sunnypilot（_allow_e2e_alerts）會整個隱藏；opview 刻意不同——
 //     底部橫幅警示（small / mid，例如「自動煞車維持中」會在停等時一直顯示）時照常顯示，
-//     圓形往上移到道路畫面右上方，避開底部橫幅；只有全螢幕警示（full）才隱藏。
+//     依橫幅的實際位置（alert_renderer.dart 的 alertBannerRect）把圓形移到橫幅上方、必要時縮小，
+//     保證不重疊；空間真的不夠（半徑 < 28）才暫時不顯示。只有全螢幕警示（full）才隱藏。
 //     聲音不受警示影響（由 app.dart 依偵測事件播放）。
 
 import 'dart:async';
@@ -16,6 +17,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:opview/selfdrive/ui/ui_state.dart';
 import 'package:opview/services/stop_go_alerts.dart';
+import 'alert_renderer.dart' show alertBannerRect;
 
 class StopGoOverlay extends StatefulWidget {
   final UIState state;
@@ -53,14 +55,44 @@ class _StopGoOverlayState extends State<StopGoOverlay> {
     final a = StopGoAlerts.instance;
     final alertSize = widget.state.alertSize;
     if (alertSize >= 3) return const SizedBox.shrink(); // 全螢幕警示：蓋住整個畫面，不顯示
-    // 底部橫幅警示（small / mid）顯示中：圓形往上移，避開底部橫幅
-    // （橫向 390 dp 高：圓形 85–233、mid 橫幅約 271 起；直向影像 244 dp 高：圓形 49–153、橫幅約 185 起）
-    final avoidBanner = alertSize != 0;
     final alert = a.activeAlert;
     final standstill = a.standstillSeconds;
     if (alert == null && standstill == null) return const SizedBox.shrink();
 
-    final r = (widget.screenH * .19).clamp(52.0, 110.0); // 直向影像約 244 dp 高：下限 52
+    final rDefault = (widget.screenH * .19).clamp(52.0, 110.0); // 直向影像約 244 dp 高：下限 52
+    return ValueListenableBuilder<Rect?>(valueListenable: alertBannerRect,
+      builder: (context, banner, _) => LayoutBuilder(builder: (context, box) {
+        final place = _place(context, box.biggest, rDefault, alertSize != 0 ? banner : null);
+        if (place == null) return const SizedBox.shrink();
+        return Stack(children: [
+          Positioned(left: place.$1, top: place.$2,
+            child: _circle(place.$3, alert, standstill)),
+        ]);
+      }));
+  }
+
+  /// 圓形位置（left, top, 半徑）。預設在右側中間（同 Alignment(.82, .08)）；
+  /// 和底部橫幅重疊時移到橫幅上方（上緣留 [topMin]），放不下就縮小；半徑 < 28 時回傳 null（不顯示）。
+  (double, double, double)? _place(BuildContext context, Size size, double rDefault, Rect? bannerGlobal) {
+    const gap = 8.0, topMin = 44.0, rMin = 28.0; // topMin：避開左上「opview」字樣與上方 TDX 跑馬燈
+    double leftFor(double r) => (size.width - 2 * r) * (1 + .82) / 2;
+    final r0 = math.min(rDefault, size.height / 2);
+    final top0 = (size.height - 2 * r0) * (1 + .08) / 2;
+    if (bannerGlobal == null) return (leftFor(r0), top0, r0);
+    final me = context.findRenderObject();
+    if (me is! RenderBox || !me.hasSize) return (leftFor(r0), top0, r0);
+    final banner = Rect.fromPoints(me.globalToLocal(bannerGlobal.topLeft), me.globalToLocal(bannerGlobal.bottomRight));
+    final circle0 = Rect.fromLTWH(leftFor(r0), top0, 2 * r0, 2 * r0);
+    if (!circle0.inflate(gap).overlaps(banner)) return (leftFor(r0), top0, r0); // 沒重疊：維持原位
+    // 移到橫幅上方：先保留上緣 topMin，放不下再貼近上緣
+    for (final top in [topMin, 6.0]) {
+      final r = math.min(r0, (banner.top - gap - top) / 2);
+      if (r >= rMin) return (leftFor(r), top, r);
+    }
+    return null;
+  }
+
+  Widget _circle(double r, StopGoKind? alert, double? standstill) {
     // 每秒前 40% 白色、其餘綠色（circular_alerts.py：frame % fps < fps / 2.5）
     final pulseWhite = (_frame % 10) < 4;
     final ringColor = alert == null || pulseWhite ? const Color(0x4BFFFFFF) : const Color(0x4B00FF00);
@@ -84,17 +116,14 @@ class _StopGoOverlayState extends State<StopGoOverlay> {
             fontWeight: FontWeight.w800, height: 1, fontFeatures: const [FontFeature.tabularFigures()])),
       ]);
     }
-    return Align(
-      alignment: Alignment(.82, avoidBanner ? -.3 : .08),
-      child: IgnorePointer(child: Container(
+    return IgnorePointer(child: Container(
         width: r * 2, height: r * 2,
         decoration: BoxDecoration(shape: BoxShape.circle, color: const Color(0xBE000000),
           border: Border.all(color: ringColor, width: math.max(3, r * .06))),
         alignment: Alignment.center,
         child: FittedBox(fit: BoxFit.scaleDown, child: Padding(
           padding: EdgeInsets.all(r * .18), child: content)),
-      )),
-    );
+      ));
   }
 }
 

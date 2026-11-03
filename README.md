@@ -6,7 +6,7 @@
 
 **繁體中文** | [English（原版說明）](README_en.md)
 
-目前版本：**v2.0**
+目前版本：**v2.0.1**（[更新內容](#更新紀錄)）
 
 opview 在手機上即時顯示 [openpilot](https://github.com/commaai/openpilot) 的行車畫面，包括道路影像、預測路徑、車道線、前車和警示，並加上儀表介面與台灣用路資訊。
 
@@ -81,7 +81,7 @@ opview 在手機上即時顯示 [openpilot](https://github.com/commaai/openpilot
 移植自 sunnypilot（`e2e_alerts_helper.py`、`circular_alerts.py`），並改在手機端計算，所以 dragonpilot 等沒有 `longitudinalPlanSP` 的分支也能用。
 
 - **前車起步偵測**：停在前車後方 8 公尺內時，前車開走就提醒。
-- **綠燈起步偵測**：停車且前方沒有車時，模型判斷前方可以通行（綠燈）就提醒。
+- **綠燈起步偵測**：停車且前方 8 公尺內沒有車（沒有前車，或前車在 8 公尺外，例如停在較遠的機車後面）時，模型判斷前方可以通行（綠燈）就提醒。同一次停等已提醒過前車起步，就不會再提醒綠燈。（sunnypilot 原本只要有前車就不偵測綠燈，opview 刻意放寬。）
 - **車輛停等計時**：車輛靜止時，在道路畫面右側顯示停等時間（分:秒）。
 
 三項提醒的運作方式：
@@ -95,7 +95,7 @@ opview 在手機上即時顯示 [openpilot](https://github.com/commaai/openpilot
     - 「手機沒有中文語音資料，改播嗶嗶聲」：請到系統「文字轉語音」下載中文（台灣）語音。
     - 「文字轉語音初始化失敗」。
 - 只在 openpilot 未啟用且車輛停止時運作。
-- comma 底部橫幅警示（例如「自動煞車維持中」）顯示時，圓形會往上移到道路畫面右上方，不會被蓋掉。只有全螢幕警示才會暫時隱藏。聲音不受警示影響。
+- comma 底部橫幅警示（events.py，例如「自動煞車維持中」）顯示時，圓形會依橫幅的實際位置移到橫幅上方，空間不夠時自動縮小，兩者不會重疊。只有全螢幕警示，或空間小到放不下時，才會暫時隱藏。聲音不受警示影響。
 - 提醒僅供參考，起步前仍須自行確認路況。
 
 ### 背景執行（保留起步語音）
@@ -217,7 +217,7 @@ scripts/build.sh ios                 # iOS（需要 macOS + Xcode）
 
 **發布 Release：**
 ```bash
-scripts/release.sh 2.0.0      # 發布 v2.0（標籤 v2.0-uber；結尾 .0 省略，與 App 顯示一致）
+scripts/release.sh 2.0.1      # 發布 v2.0.1（標籤 v2.0.1-uber）；X.Y.0 的標籤會省略結尾 .0，例如 v2.1
 scripts/release.sh            # 升級修訂號；在 opview-uber 分支會建立 vX.Y.Z-uber 標籤
 scripts/release.sh minor      # 升級次版號
 scripts/release.sh 0.3.0      # 指定版本
@@ -301,6 +301,23 @@ scripts/release.sh 0.3.0      # 指定版本
 | `openpilot/system/webrtc/webrtcd.py` | POST /stream API、資料通道格式 |
 | `dashy` | 依影像縮放的校準、H264 SDP 改寫、NaN 處理、`}{` 分割、NSD 探索 |
 | sunnypilot `e2e_alerts_helper.py`、`circular_alerts.py` | 前車起步、綠燈起步偵測與停等計時 |
+
+## 更新紀錄
+
+### v2.0.1（2026-11-03）
+直接覆蓋安裝 v2.0 即可，設定會保留（若 v2.0 與 v2.0.1 都是用同一把固定金鑰簽章；CI 臨時金鑰簽的版本需先移除舊版）。
+
+- **Google 語音修正**：補上 Android 11 以上必要的語音服務宣告，修正 Google 語音完全沒有聲音的問題；試聽按鈕下方會顯示播放結果（例如媒體音量 0）。選項名稱改為「Google 語音」。
+- **嗶嗶聲**：改用內建的 `beep.wav`，跟著媒體音量，不再受通知音量、勿擾模式影響。
+- **起步提醒圓形**：依 comma 警示橫幅（例如「自動煞車維持中」）的實際位置自動避開，必要時縮小，不再被蓋住或重疊。
+- **綠燈起步**：前車在 8 公尺外（例如停在較遠的機車後面）也會偵測綠燈；同一次停等已提醒前車起步就不再提醒綠燈。
+- **前車資料**：同時支援 dragonpilot（`status`）與 sunnypilot（`present`）的前車欄位；log 每 60 秒記錄前車資料統計。
+- **CI**：修正 3 個測試、測試失敗原因直接印在 log。
+
+### v2.0（2026-11-02）
+- 前車起步、綠燈起步、車輛停等計時（直向、橫向），提醒聲音，背景執行。
+- leadOne 十字線、leadTwo 紅色箭頭；移除子母畫面。
+- flutter analyze、GitHub Actions 修正；README 重寫。
 
 ## 版權與授權
 

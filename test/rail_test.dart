@@ -73,7 +73,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
       home: AugmentedRoadView(uiState: state, settings: settings)));
     await tester.pump(const Duration(seconds: 1));
-    await tester.tap(find.text('km/h'));
+    // 只點側欄按鈕（InkWell 內）：儀表卡片的速度單位也叫 km/h
+    await tester.tap(find.descendant(of: find.byType(InkWell), matching: find.text('km/h')));
     await tester.pump(const Duration(seconds: 6));
     expect(find.text('全螢幕'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());

@@ -59,6 +59,34 @@ void main() {
     expect(x.fired, [StopGoKind.leadDepart]);
   });
 
+  test('green light with a lead farther than 8 m (e.g. a scooter at 10 m)', () async {
+    final x = setup();
+    x.s.leadOne = {'status': true, 'dRel': 10.0}; // 8 m 外的前車：不算「停在前車後方」
+    x.s.pathX..clear()..addAll([0, 4, 8]);
+    driveThenStop(x.s, (d) => x.run(d));
+    x.run(3);
+    expect(x.fired, isEmpty);
+    x.s.pathX..clear()..addAll([0, 20, 45]);    // 轉綠
+    x.run(0.6);
+    await Future<void>.delayed(Duration.zero);
+    expect(x.fired, [StopGoKind.greenLight]);
+  });
+
+  test('close lead: lead departure only, no green light afterwards', () async {
+    final x = setup();
+    x.s.leadOne = {'status': true, 'dRel': 4.0};
+    x.s.pathX..clear()..addAll([0, 4, 8]);
+    driveThenStop(x.s, (d) => x.run(d));
+    x.run(3.5);
+    x.s.leadOne = {'status': true, 'dRel': 5.6};  // 前車開走
+    x.run(0.6);
+    x.s.leadOne = {'status': true, 'dRel': 12.0}; // 前車已在 8 m 外
+    x.s.pathX..clear()..addAll([0, 20, 45]);      // 模型也判斷可走
+    x.run(1.5);
+    await Future<void>.delayed(Duration.zero);
+    expect(x.fired, [StopGoKind.leadDepart]);     // 不會再接著提醒綠燈
+  });
+
   test('no alerts while openpilot is engaged or gas pressed', () async {
     final x = setup();
     x.s.pathX..clear()..addAll([0, 5, 10]);

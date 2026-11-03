@@ -31,7 +31,8 @@ void main() {
 
     // 操作列在畫面下方、全部在畫面內
     for (final label in ['儀表介面', 'km/h', '顯示設定', '全螢幕', '退出']) {
-      final r = tester.getRect(find.text(label));
+      // 只找操作列按鈕（InkWell 內）：儀表卡片的速度單位也叫 km/h
+      final r = tester.getRect(find.descendant(of: find.byType(InkWell), matching: find.text(label)));
       expect(r.top, greaterThan(844 * .8), reason: '$label 應在下方操作列');
       expect(r.bottom, lessThanOrEqualTo(844), reason: label);
       expect(r.left, greaterThanOrEqualTo(0), reason: label);
@@ -126,10 +127,13 @@ void main() {
     expect(c.center.dy, closeTo(d.center.dy, 1));   // 第二排
     expect(c.center.dy, greaterThan(a.center.dy + 40));
     expect(a.center.dx, closeTo(c.center.dx, 1));   // 同一欄
-    // 品牌 / 車型下拉上下排
-    final brand = tester.getRect(find.text('品牌'));
-    final model = tester.getRect(find.textContaining('自動偵測（不指定車型）'));
-    expect(model.top, greaterThan(brand.bottom));
+    // 品牌 / 車型下拉上下排（用下拉選單本身判斷；提示文字在下拉選單內部的 IndexedStack，位置不一定可靠）
+    final dropdowns = find.byWidgetPredicate((w) => w is DropdownButton);
+    expect(dropdowns, findsNWidgets(2));
+    final rects = dropdowns.evaluate().map((e) => tester.getRect(find.byWidget(e.widget))).toList()
+      ..sort((x, y) => x.top.compareTo(y.top));
+    expect(rects[1].top, greaterThanOrEqualTo(rects[0].bottom - 1));  // 上下排，不是左右並排
+    expect(rects[0].width, closeTo(rects[1].width, 1));
     await tester.pumpWidget(const SizedBox.shrink());
     settings.dispose();
   });

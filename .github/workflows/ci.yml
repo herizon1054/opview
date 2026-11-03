@@ -36,7 +36,8 @@ jobs:
 
       - run: flutter analyze --no-fatal-infos
 
-      - run: flutter test --exclude-tags golden
+      # expanded：失敗原因直接印在 log（預設的 GitHub 格式會把錯誤收在可展開的群組裡）
+      - run: flutter test --exclude-tags golden --reporter expanded
 
   build-android:
     name: 建置 Android APK

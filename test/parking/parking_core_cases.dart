@@ -68,14 +68,25 @@ class Fixture {
   };
   Future<http.Response> normal(http.Request r) async {
     if (r.url.host == 'data.ntpc.gov.tw') {
+      // 新北 JSON 分頁 API（/json?page=N&size=1000）：測試資料只有一頁
       final live = r.url.path.contains('e09b35a5');
-      return http.Response(
-        live
-            ? 'ID,AVAILABLECAR\r\n010001,8\r\n'
-            : 'ID,NAME,ADDRESS,TW97X,TW97Y,TOTALCAR\r\n010001,測試地方停車場,測試地址,250000,2765777,20\r\n',
-        200,
-        headers: {'content-type': 'text/csv; charset=utf-8'},
-      );
+      final page = int.tryParse(r.url.queryParameters['page'] ?? '0') ?? 0;
+      return response(page > 0
+          ? []
+          : live
+          ? [
+              {'ID': '010001', 'AVAILABLECAR': '8'},
+            ]
+          : [
+              {
+                'ID': '010001',
+                'NAME': '測試地方停車場',
+                'ADDRESS': '測試地址',
+                'TW97X': '250000',
+                'TW97Y': '2765777',
+                'TOTALCAR': '20',
+              },
+            ]);
     }
     if (r.url.host == 'hispark.hccg.gov.tw') {
       return response([

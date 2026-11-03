@@ -39,6 +39,41 @@ const _alertColors = {
   _statusCritical: Color(0xF1C92231),
 };
 
+/// 底部橫幅警示（small / mid）目前在螢幕上的位置（全域座標）；沒有橫幅時為 null。
+/// 起步提醒 / 停等計時的圓形（stop_go_overlay.dart）用它避開橫幅：
+/// 橫幅高度依文字與字型而定（直向 fitHeight、副標換行時會變高），用實際位置比用公式估計可靠。
+final alertBannerRect = ValueNotifier<Rect?>(null);
+
+/// 每次排版後回報子元件（橫幅本體）的全域位置；移除時清掉
+class AlertBannerRectReporter extends StatefulWidget {
+  final Widget child;
+  const AlertBannerRectReporter({super.key, required this.child});
+  @override
+  State<AlertBannerRectReporter> createState() => _AlertBannerRectReporterState();
+}
+
+class _AlertBannerRectReporterState extends State<AlertBannerRectReporter> {
+  void _report(Duration _) {
+    if (!mounted) return;
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize || !box.attached) return;
+    final rect = box.localToGlobal(Offset.zero) & box.size;
+    if (alertBannerRect.value != rect) alertBannerRect.value = rect;
+  }
+
+  @override
+  void dispose() {
+    alertBannerRect.value = null;
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    WidgetsBinding.instance.addPostFrameCallback(_report);
+    return widget.child;
+  }
+}
+
 class AlertRenderer extends StatelessWidget {
   final UIState uiState;
   final double scale;
@@ -73,14 +108,14 @@ class AlertRenderer extends StatelessWidget {
       final fs = (size == _sizeSmall ? _alertFontMedium : _alertFontBig) * scale * _k;
       return Positioned(
         left: m, right: m, bottom: m,
-        child: Align(alignment: Alignment.bottomCenter, child: Container(
+        child: Align(alignment: Alignment.bottomCenter, child: AlertBannerRectReporter(child: Container(
           decoration: BoxDecoration(
             color: bgColor,
             borderRadius: BorderRadius.circular(_alertBorderRadius * scale * _k),
           ),
           padding: EdgeInsets.symmetric(horizontal: _alertPadding * scale * _k, vertical: fs * .3),
           child: size == _sizeSmall ? _smallContent() : _midContent(),
-        )),
+        ))),
       );
     }
 
@@ -89,7 +124,7 @@ class AlertRenderer extends StatelessWidget {
       final ch = (h - 2 * m) * _k;
       return Positioned(
         left: m, right: m, bottom: m, height: ch,
-        child: Align(alignment: Alignment.bottomCenter, child: Container(
+        child: Align(alignment: Alignment.bottomCenter, child: AlertBannerRectReporter(child: Container(
           height: ch,
           decoration: BoxDecoration(
             color: bgColor,
@@ -97,7 +132,7 @@ class AlertRenderer extends StatelessWidget {
           ),
           padding: EdgeInsets.symmetric(horizontal: _alertPadding * scale * _k),
           child: size == _sizeSmall ? _smallContent() : _midContent(),
-        )),
+        ))),
       );
     }
 
@@ -106,14 +141,14 @@ class AlertRenderer extends StatelessWidget {
       right: m,
       bottom: m,
       height: h - 2 * m,
-      child: Container(
+      child: AlertBannerRectReporter(child: Container(
         decoration: BoxDecoration(
           color: bgColor,
           borderRadius: BorderRadius.circular(_alertBorderRadius * scale),
         ),
         padding: EdgeInsets.symmetric(horizontal: _alertPadding * scale),
         child: size == _sizeSmall ? _smallContent() : _midContent(),
-      ),
+      )),
     );
   }
 

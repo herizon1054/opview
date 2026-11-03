@@ -66,7 +66,7 @@ class ViewerSettingsDialog extends StatelessWidget {
           SwitchListTile(contentPadding: EdgeInsets.zero,
             secondary: stopGoSettingIcon(StopGoKind.greenLight),
             title: const Text('綠燈起步偵測'),
-            subtitle: const Text('停車且前方沒有車時，模型判斷前方可通行（綠燈）即提醒｜畫面與聲音：直向、橫向'),
+            subtitle: const Text('停車且前方 8 公尺內沒有車時，模型判斷前方可通行（綠燈）即提醒｜畫面與聲音：直向、橫向'),
             value: settings.greenLightAlert, onChanged: settings.setGreenLightAlert),
           SwitchListTile(contentPadding: EdgeInsets.zero,
             secondary: stopGoSettingIcon(null),

@@ -356,20 +356,41 @@ class ParkingApi {
     bool waitForSlot = false,
     void Function(String)? progress,
   }) async {
-    while (true) {
-      _check(gen);
-      final delay = await gate.reserveData();
-      if (delay == 0) break;
-      if (live && !waitForSlot) throw ParkingGateError('本機每分鐘 5 筆節流，請稍後查詢');
-      progress?.call('地方位置下載節流等待 ${(delay / 1000).ceil()} 秒…');
-      await sleep(Duration(milliseconds: math.min(delay, 1000)));
+    Future<String> fetch(Uri url) async {
+      while (true) {
+        _check(gen);
+        final delay = await gate.reserveData();
+        if (delay == 0) break;
+        if (live && !waitForSlot) throw ParkingGateError('本機每分鐘 5 筆節流，請稍後查詢');
+        progress?.call('地方位置下載節流等待 ${(delay / 1000).ceil()} 秒…');
+        await sleep(Duration(milliseconds: math.min(delay, 1000)));
+      }
+      // Deliberately has no Authorization/header/body credentials.
+      return utf8.decode((await _send(http.Request('GET', url), gen)).bodyBytes);
     }
-    final request = http.Request(
-      'GET',
-      Uri.parse(localParkingUrl(city, live: live)),
-    );
-    // Deliberately has no Authorization/header/body credentials.
-    return utf8.decode((await _send(request, gen)).bodyBytes);
+
+    if (city != 'NewTaipei') return fetch(Uri.parse(localParkingUrl(city, live: live)));
+    // 新北：JSON 分頁 API，逐頁取到不足一頁為止，合併成一個 JSON 陣列
+    final all = <dynamic>[];
+    for (var page = 0; page < ntpcMaxPages; page++) {
+      final value = _ntpcPage(
+        await fetch(Uri.parse(ntpcJsonUrl(live: live, page: page))),
+      );
+      all.addAll(value);
+      if (value.length < ntpcPageSize) break;
+    }
+    return jsonEncode(all);
+  }
+
+  /// 新北 JSON API 的一頁：必須是 JSON 陣列，否則視為格式異常（不當成空資料）
+  static List<dynamic> _ntpcPage(String body) {
+    try {
+      final value = jsonDecode(body);
+      if (value is List) return value;
+    } on FormatException {
+      // 落到下面的錯誤
+    }
+    throw ParkingApiError('新北市政府資料格式異常（不是 JSON 陣列）');
   }
 
   /// Samples supported endpoints without modifying location caches or refresh dates.
@@ -662,7 +683,9 @@ class ParkingApi {
     // A static download can fill the shared 5/minute window (e.g. Kaohsiung:
     // 2 off-street + 3 on-street pages). Check before starting the 30 s click
     // cooldown so live groups are not silently dropped by local throttling.
-    final liveRequests = needed.length + (localGroup.isEmpty ? 0 : 1);
+    // 新北即時空位約 1,374 筆 → JSON API 2 頁（2 筆請求）
+    final liveRequests = needed.length +
+        (localGroup.isEmpty ? 0 : (city == 'NewTaipei' ? 2 : 1));
     final cooldown = await gate.remaining();
     final wait = await gate.remaining(dataSlots: liveRequests);
     if (wait > cooldown) {

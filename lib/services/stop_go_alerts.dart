@@ -12,6 +12,11 @@
 //   - sunnypilot 以 modelV2 幀數（DT_MDL = 0.05 s）累計時間；opview 改用手機單調時鐘的實際間隔
 //     （每次最多算 0.2 s），手機合併 / 丟棄舊訊息時計時仍正確。超過 2 秒沒有資料（斷線）就整個重置。
 //   - leadOne 是否存在：dragonpilot 的 cereal 欄位為 status，sunnypilot / 新版 openpilot 為 present，兩個都認（leadPresent）。
+//   - 綠燈起步的前車條件（v37，刻意不同）：sunnypilot 只要有前車（任何距離）就不偵測綠燈。
+//     台灣停紅燈時前方常有機車停在 8～10 m（實測影片：前車 8～10 m，轉綠也沒有任何提醒），
+//     8 m 外的前車也不在前車起步的範圍內，結果兩種提醒都不會出現。
+//     opview 改為：前車在 8 m 內（交給前車起步）才不偵測綠燈；8 m 外或沒有前車都偵測綠燈。
+//     同一次停等前車起步已提醒過，就不再提醒綠燈（避免前車開走後又接著提醒一次）。
 //
 // 只在 openpilot 未啟用、停車中時運作（與 sunnypilot 相同：allowed = 靜止 && 沒踩油門 && 未啟用 && 2 秒內沒移動）。
 // 提醒僅供參考，起步前仍須駕駛自行確認路況。
@@ -80,6 +85,7 @@ class StopGoAlerts extends ChangeNotifier {
   double _lastLeadDistance = -1;
   bool _allowed = false, _lastAllowed = false;
   bool _ldConfirmedLead = false, _ldArmed = false;
+  bool _ldFiredThisStop = false; // 這次停等已提醒過前車起步（離開停等才清除）
 
   @visibleForTesting
   bool get allowed => _allowed;
@@ -92,6 +98,7 @@ class StopGoAlerts extends ChangeNotifier {
     _lastLeadDistance = -1;
     _allowed = _lastAllowed = false;
     _ldConfirmedLead = _ldArmed = false;
+    _ldFiredThisStop = false;
     _standstillSince = null;
     _standstill = false;
     _shownUntil = -1;
@@ -125,6 +132,7 @@ class StopGoAlerts extends ChangeNotifier {
     final dRel = (lead?['dRel'] as num?)?.toDouble() ?? double.infinity;
     final modelX = s.pathX;
     final farX = modelX.isEmpty ? 0.0 : modelX.last;
+    final closeLead = hasLead && dRel < closeLeadDist; // 停在前車後方（8 m 內）
 
     // 綠燈起步
     var glTrigger = false;
@@ -136,7 +144,6 @@ class StopGoAlerts extends ChangeNotifier {
     }
 
     // 前車起步
-    final closeLead = hasLead && dRel < closeLeadDist;
     if (_allowed && !_lastAllowed && closeLead) {
       _ldConfirmedLead = true;
     } else if (!_allowed) {
@@ -164,11 +171,14 @@ class StopGoAlerts extends ChangeNotifier {
       _ldTimer = 0;
     }
     _lastAllowed = _allowed;
+    if (!_allowed) _ldFiredThisStop = false;
 
-    final gl = _stateMachine(_glState, greenLightEnabled, _allowed && !hasLead, glTrigger);
+    // 綠燈：8 m 內沒有前車（sunnypilot 為「沒有任何前車」，見檔案開頭），且這次停等前車起步還沒提醒過
+    final gl = _stateMachine(_glState, greenLightEnabled, _allowed && !closeLead && !_ldFiredThisStop, glTrigger);
     _glState = gl.$1;
     final ld = _stateMachine(_ldState, leadDepartEnabled, _allowed && _ldArmed, ldTrigger);
     _ldState = ld.$1;
+    if (ld.$2) _ldFiredThisStop = true;
 
     // circular_alerts.py：綠燈優先
     final fired = gl.$2 ? StopGoKind.greenLight : ld.$2 ? StopGoKind.leadDepart : null;

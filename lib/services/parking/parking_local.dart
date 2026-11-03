@@ -11,6 +11,17 @@ const ntpcStaticUrl =
     'https://data.ntpc.gov.tw/api/datasets/B1464EF0-9C7C-4A6F-ABF7-6BDF32847E68/csv/file';
 const ntpcLiveUrl =
     'https://data.ntpc.gov.tw/api/datasets/e09b35a5-a738-48cc-b0f5-570b67ad9c78/csv/file';
+
+// 新北市改用開放資料平台的 JSON 分頁 API（每頁最多 1000 筆）。
+// 實測：完整 CSV 下載（csv/file）會被新北伺服器以「Request Rejected」拒絕，JSON 分頁 API 可以正常取得。
+//   位置（靜態）：約 1,000～2,000 筆 → 2 頁；即時剩餘車位：約 1,374 筆 → 2 頁（每 3 分鐘更新）
+const ntpcStaticDataset = 'B1464EF0-9C7C-4A6F-ABF7-6BDF32847E68';
+const ntpcLiveDataset = 'e09b35a5-a738-48cc-b0f5-570b67ad9c78';
+const ntpcPageSize = 1000;
+const ntpcMaxPages = 5; // 安全上限：最多 5,000 筆
+String ntpcJsonUrl({required bool live, required int page}) =>
+    'https://data.ntpc.gov.tw/api/datasets/${live ? ntpcLiveDataset : ntpcStaticDataset}'
+    '/json?page=$page&size=$ntpcPageSize';
 const hsinchuParkingUrl = 'https://hispark.hccg.gov.tw/OpenData/GetParkInfo';
 
 String localParkingUrl(String city, {required bool live}) => switch (city) {
@@ -32,6 +43,27 @@ List<Map<String, dynamic>> _rows(String city, String body, bool live) {
           !e.containsKey(live ? 'FREEQUANTITY' : 'LONGITUDE'),
     )) {
       throw const FormatException('新竹市停車資料缺少必要欄位');
+    }
+    return rows;
+  }
+  // 新北 JSON API：[{"ID": "...", "AVAILABLECAR": "..."}, ...]（v35 起使用；CSV 格式仍可解析）
+  if (body.trimLeft().startsWith('[')) {
+    final value = jsonDecode(body);
+    if (value is! List || value.isEmpty || value.any((e) => e is! Map)) {
+      throw const FormatException('新北市停車資料格式異常或空白');
+    }
+    final rows = [
+      for (final e in value)
+        {
+          for (final kv in (e as Map).entries)
+            kv.key.toString().trim().toUpperCase(): kv.value,
+        },
+    ];
+    final required = live
+        ? ['ID', 'AVAILABLECAR']
+        : ['ID', 'NAME', 'TW97X', 'TW97Y', 'TOTALCAR'];
+    if (rows.any((r) => !required.every(r.containsKey))) {
+      throw const FormatException('新北市停車資料缺少必要欄位');
     }
     return rows;
   }

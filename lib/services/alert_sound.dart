@@ -31,8 +31,28 @@ String stopGoSpeech(StopGoKind k) => switch (k) {
 /// 最近一次播放的結果（顯示設定的試聽按鈕下方顯示；也寫入 log）
 final lastAlertSoundStatus = ValueNotifier<String?>(null);
 
+AlertSoundMode? _prepared;
+
+/// 預先準備提醒聲音（App 啟動、設定變更時呼叫）：Android 端把嗶嗶聲載入 SoundPool、
+/// 把兩句 Google 語音先合成成 WAV，觸發時直接播放，減少延遲。
+Future<void> prepareStopGoSounds(AlertSoundMode mode) async {
+  if (mode == _prepared) return;
+  _prepared = mode;
+  try {
+    await _channel.invokeMethod('alertSoundPrepare', {
+      'mode': mode.name,
+      'texts': [for (final k in StopGoKind.values) stopGoSpeech(k)],
+    });
+  } on PlatformException catch (e) {
+    debugPrint('[opview] 提醒聲音準備失敗：${e.message}');
+  } on MissingPluginException {
+    // 測試 / 非 Android
+  }
+}
+
 Future<void> playStopGoSound(StopGoKind kind, AlertSoundMode mode) async {
   if (mode == AlertSoundMode.mute) return;
+  final sw = Stopwatch()..start();
   String status;
   try {
     final r = await _channel.invokeMethod<Object?>('alertSound', {
@@ -46,6 +66,7 @@ Future<void> playStopGoSound(StopGoKind kind, AlertSoundMode mode) async {
   } on MissingPluginException {
     return; // 測試 / 非 Android
   }
-  debugPrint('[opview] 提醒聲音（${alertSoundLabel(mode)}「${stopGoSpeech(kind)}」）：$status');
+  // 送出 N ms：從 Dart 呼叫到 Android 開始播放（不含偵測本身與藍牙輸出延遲）
+  debugPrint('[opview] 提醒聲音（${alertSoundLabel(mode)}「${stopGoSpeech(kind)}」）：$status；送出 ${sw.elapsedMilliseconds} ms');
   lastAlertSoundStatus.value = status;
 }

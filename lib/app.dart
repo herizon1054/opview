@@ -52,6 +52,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     StopGoAlerts.instance.configure(greenLight: _settings.greenLightAlert,
         leadDepart: _settings.leadDepartAlert, standstillTimer: _settings.standstillTimer);
     _syncBackgroundWish();
+    prepareStopGoSounds(_settings.alertSound);
     LineNotifications.instance.setEnabled(_settings.lineNotify);
     _uiState.notifyNow();
     _updatePipOffer();

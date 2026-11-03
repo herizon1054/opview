@@ -148,6 +148,8 @@ class MainActivity: FlutterActivity() {
                                    else "沒有中文語音資料（zh-TW=$tw, zh=$zh）"
                             ttsNoChinese = zh < android.speech.tts.TextToSpeech.LANG_AVAILABLE
                         }
+                        // 語速：Google 台灣中文預設偏慢，提醒用 1.4 倍（只改速度，不改字數、音高）
+                        e.setSpeechRate(alertSpeechRate)
                         e.setAudioAttributes(android.media.AudioAttributes.Builder()
                             .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
                             .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
@@ -274,6 +276,7 @@ class MainActivity: FlutterActivity() {
     //   - 播放期間要求短暫音訊焦點（音樂壓低），3 秒後放掉。
     // 無法避免的延遲：偵測條件需持續 0.3 秒（sunnypilot 設定）、comma → 手機的資料傳輸、藍牙輸出本身約 0.15～0.3 秒。
     private var focusRequest: Any? = null // android.media.AudioFocusRequest（API 26+）
+    private val alertSpeechRate = 1.4f
     private var alertPool: android.media.SoundPool? = null
     private var beepSoundId = 0
     private var beepLoaded = false
@@ -334,7 +337,50 @@ class MainActivity: FlutterActivity() {
         val pool = alertPool ?: return
         val f = File(cacheDir, "opview_voice_${text.hashCode().toUInt()}.wav")
         if (!f.exists() || f.length() < 1000) return
+        trimWavSilence(f) // 去掉合成語音開頭／結尾的靜音，聲音一觸發就出來
         voicePending[pool.load(f.absolutePath, 1)] = text
+    }
+
+    /**
+     * 去掉 16-bit PCM WAV 開頭與結尾的靜音（各保留 30 ms），就地覆寫。
+     * Google 合成的語音開頭常有 0.1～0.3 秒靜音，會讓提醒聽起來慢半拍。格式不符就不動。
+     */
+    private fun trimWavSilence(f: File) {
+        try {
+            val b = f.readBytes()
+            if (b.size < 44 || String(b, 0, 4, Charsets.US_ASCII) != "RIFF" || String(b, 8, 4, Charsets.US_ASCII) != "WAVE") return
+            fun le16(i: Int) = (b[i].toInt() and 0xff) or ((b[i + 1].toInt() and 0xff) shl 8)
+            fun le32(i: Int) = le16(i) or (le16(i + 2) shl 16)
+            var pos = 12
+            var channels = 1; var rate = 0; var bits = 0; var dataPos = -1; var dataLen = 0
+            while (pos + 8 <= b.size) {
+                val id = String(b, pos, 4, Charsets.US_ASCII); val len = le32(pos + 4)
+                if (len < 0) return
+                if (id == "fmt ") { channels = le16(pos + 10); rate = le32(pos + 12); bits = le16(pos + 22) }
+                if (id == "data") { dataPos = pos + 8; dataLen = minOf(len, b.size - dataPos); break }
+                pos += 8 + len + (len and 1)
+            }
+            if (dataPos < 0 || bits != 16 || rate <= 0 || channels < 1) return
+            val frame = 2 * channels
+            val frames = dataLen / frame
+            fun amp(fi: Int): Int { var m = 0; for (c in 0 until channels) { val o = dataPos + fi * frame + 2 * c
+                val v = (le16(o) shl 16) shr 16; if (kotlin.math.abs(v) > m) m = kotlin.math.abs(v) }; return m }
+            val threshold = 600 // 約 -35 dBFS
+            var first = 0; while (first < frames && amp(first) < threshold) first++
+            var last = frames - 1; while (last > first && amp(last) < threshold) last--
+            if (first >= last) return
+            val pad = rate * 30 / 1000
+            val s0 = maxOf(0, first - pad); val s1 = minOf(frames, last + pad)
+            val pcm = b.copyOfRange(dataPos + s0 * frame, dataPos + s1 * frame)
+            // 重新寫成標準 44 bytes 標頭的 WAV
+            val out = java.io.ByteArrayOutputStream()
+            fun w32(v: Int) { out.write(v and 0xff); out.write((v shr 8) and 0xff); out.write((v shr 16) and 0xff); out.write((v shr 24) and 0xff) }
+            fun w16(v: Int) { out.write(v and 0xff); out.write((v shr 8) and 0xff) }
+            out.write("RIFF".toByteArray()); w32(36 + pcm.size); out.write("WAVE".toByteArray())
+            out.write("fmt ".toByteArray()); w32(16); w16(1); w16(channels); w32(rate); w32(rate * frame); w16(frame); w16(16)
+            out.write("data".toByteArray()); w32(pcm.size); out.write(pcm)
+            f.writeBytes(out.toByteArray())
+        } catch (_: Exception) {}
     }
 
     private fun onVoiceCacheFailed(uid: String, code: Int) {

@@ -1,7 +1,7 @@
 name: opview
 description: openpilot onroad UI over WebRTC
 publish_to: 'none'
-version: 2.0.3+203  # v2.0.3（Android versionName 2.0.3、versionCode 203；結尾為 .0 的版本會省略，見 android/app/build.gradle）
+version: 2.0.6+206  # v2.0.6（Android versionName 2.0.6、versionCode 206；結尾為 .0 的版本會省略，見 android/app/build.gradle）
 
 environment:
   sdk: ^3.6.2

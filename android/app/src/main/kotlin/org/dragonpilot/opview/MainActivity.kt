@@ -121,7 +121,8 @@ class MainActivity: FlutterActivity() {
 
     // ---- 起步提醒聲音 ----
     // 語音：TextToSpeech，優先使用 Google 文字轉語音引擎（com.google.android.tts），語言 zh-TW；
-    // 使用 Google 台灣中文的預設聲音（男聲或女聲依系統「文字轉語音」設定）。音訊用途設為導航語音：播放時系統會壓低音樂音量。
+    // 使用 Google 台灣中文的預設聲音（男聲或女聲依系統「文字轉語音」設定）。
+    // 音訊用途：媒體（v2.0.5 起；原本是導航語音，部分機型（OPPO ColorOS 實測）會播放成功卻聽不到）。播放時要求短暫焦點，音樂會壓低。
     private var tts: android.speech.tts.TextToSpeech? = null
     private var ttsReady = false
     private var pendingSpeech: String? = null
@@ -151,7 +152,7 @@ class MainActivity: FlutterActivity() {
                         // 語速：Google 台灣中文預設偏慢，提醒用 1.4 倍（只改速度，不改字數、音高）
                         e.setSpeechRate(alertSpeechRate)
                         e.setAudioAttributes(android.media.AudioAttributes.Builder()
-                            .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                            .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
                             .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
                         e.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
                             override fun onStart(utteranceId: String?) {}
@@ -232,7 +233,7 @@ class MainActivity: FlutterActivity() {
         val mp = android.media.MediaPlayer()
         return try {
             mp.setAudioAttributes(android.media.AudioAttributes.Builder()
-                .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
                 .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build())
             try {
                 assets.openFd(key).use { afd -> mp.setDataSource(afd.fileDescriptor, afd.startOffset, afd.length) }
@@ -252,11 +253,20 @@ class MainActivity: FlutterActivity() {
                 abandonAlertFocus()
                 true
             }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) speakerDevice()?.let { mp.setPreferredDevice(it) }
             mp.prepare()
             wavPlayer?.let { try { it.stop() } catch (_: Exception) {}; it.release() }
             wavPlayer = mp
             requestAlertFocus()
             mp.start()
+            mainHandler.postDelayed({
+                try {
+                    if (wavPlayer === mp) {
+                        val dev = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) deviceName(mp.routedDevice?.type) else "未知"
+                        nativeLog("提醒聲音：MediaPlayer 播放位置 ${mp.currentPosition} ms，實際輸出 $dev")
+                    }
+                } catch (_: Exception) {}
+            }, 300)
             null
         } catch (e: Exception) {
             try { mp.release() } catch (_: Exception) {}
@@ -277,52 +287,148 @@ class MainActivity: FlutterActivity() {
     // 無法避免的延遲：偵測條件需持續 0.3 秒（sunnypilot 設定）、comma → 手機的資料傳輸、藍牙輸出本身約 0.15～0.3 秒。
     private var focusRequest: Any? = null // android.media.AudioFocusRequest（API 26+）
     private val alertSpeechRate = 1.4f
-    private var alertPool: android.media.SoundPool? = null
-    private var beepSoundId = 0
-    private var beepLoaded = false
-    private val voiceSoundIds = mutableMapOf<String, Int>()   // 文字 → SoundPool id（已載入完成）
-    private val voicePending = mutableMapOf<Int, String>()     // 載入中的 SoundPool id → 文字
+    // v2.0.5：SoundPool 改成預先載入的 AudioTrack（MODE_STATIC）。
+    //   OPPO CPH2641（Android 14）實測：設定裡試聽聽得到，開車時 SoundPool.play() 回傳成功、log 寫「播放中」，但整趟沒有聲音。
+    //   AudioTrack 可以讀回「實際播出的位置」與「實際輸出裝置」，播放 0.4 秒後檢查：
+    //   位置沒有前進 → 判定系統沒有播出，立刻改用 MediaPlayer（嗶嗶聲）或即時語音，並寫入 log。
+    private class Clip(val track: android.media.AudioTrack, val frames: Int, val rate: Int)
+    private var beepClip: Clip? = null
+    private var beepClipError: String? = null
+    private val voiceClips = mutableMapOf<String, Clip>()       // 文字 → 預先合成的語音
     private val voiceCacheTexts = mutableMapOf<String, String>() // cache:N → 文字
     private var wantedVoices = listOf<String>()
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
 
-    private fun ensureAlertPool(): android.media.SoundPool? {
-        alertPool?.let { return it }
-        return try {
-            val pool = android.media.SoundPool.Builder().setMaxStreams(2).setAudioAttributes(alertAttrs()).build()
-            pool.setOnLoadCompleteListener { _, id, status ->
-                if (id == beepSoundId) {
-                    beepLoaded = status == 0
-                } else voicePending.remove(id)?.let { text ->
-                    if (status == 0) {
-                        voiceSoundIds[text] = id
-                        nativeLog("提醒聲音：已預先合成「$text」，之後直接播放")
-                    }
-                }
+    /** 16-bit PCM WAV → (聲道, 取樣率, PCM)；格式不符回傳 null */
+    private fun wavPcm(b: ByteArray): Triple<Int, Int, ByteArray>? {
+        if (b.size < 44 || String(b, 0, 4, Charsets.US_ASCII) != "RIFF" || String(b, 8, 4, Charsets.US_ASCII) != "WAVE") return null
+        fun le16(i: Int) = (b[i].toInt() and 0xff) or ((b[i + 1].toInt() and 0xff) shl 8)
+        fun le32(i: Int) = le16(i) or (le16(i + 2) shl 16)
+        var pos = 12
+        var channels = 1; var rate = 0; var bits = 0
+        while (pos + 8 <= b.size) {
+            val id = String(b, pos, 4, Charsets.US_ASCII); val len = le32(pos + 4)
+            if (len < 0) return null
+            if (id == "fmt ") { channels = le16(pos + 10); rate = le32(pos + 12); bits = le16(pos + 22) }
+            if (id == "data") {
+                if (bits != 16 || rate <= 0 || channels !in 1..2) return null
+                val frame = 2 * channels
+                val n = (minOf(len, b.size - pos - 8) / frame) * frame
+                return Triple(channels, rate, b.copyOfRange(pos + 8, pos + 8 + n))
             }
-            val key = io.flutter.FlutterInjector.instance().flutterLoader().getLookupKeyForAsset("assets/sounds/beep.wav")
-            assets.openFd(key).use { afd -> beepSoundId = pool.load(afd, 1) }
-            alertPool = pool
-            pool
+            pos += 8 + len + (len and 1)
+        }
+        return null
+    }
+
+    /** WAV → 預先載入的 AudioTrack；失敗回傳 null（原因寫入 log） */
+    private fun makeClip(wav: ByteArray, label: String): Clip? {
+        val (channels, rate, pcm) = wavPcm(wav) ?: run { nativeLog("提醒聲音：$label 不是 16-bit PCM WAV"); return null }
+        if (pcm.isEmpty()) return null
+        return try {
+            val format = android.media.AudioFormat.Builder()
+                .setSampleRate(rate)
+                .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)
+                .setChannelMask(if (channels == 2) android.media.AudioFormat.CHANNEL_OUT_STEREO else android.media.AudioFormat.CHANNEL_OUT_MONO)
+                .build()
+            val track = android.media.AudioTrack(alertAttrs(), format, pcm.size,
+                android.media.AudioTrack.MODE_STATIC, android.media.AudioManager.AUDIO_SESSION_ID_GENERATE)
+            val written = track.write(pcm, 0, pcm.size)
+            if (written != pcm.size || track.state != android.media.AudioTrack.STATE_INITIALIZED) {
+                track.release()
+                nativeLog("提醒聲音：$label 預先載入失敗（write=$written, state=${track.state}）")
+                return null
+            }
+            forceSpeaker(track)
+            Clip(track, pcm.size / (2 * channels), rate)
         } catch (e: Exception) {
-            nativeLog("提醒聲音：SoundPool 初始化失敗 ${e.javaClass.simpleName}: ${e.message}")
+            nativeLog("提醒聲音：$label 預先載入失敗 ${e.javaClass.simpleName}: ${e.message}")
             null
         }
     }
 
-    /** SoundPool 播放；成功回傳 true */
-    private fun playPooled(id: Int): Boolean {
-        val pool = alertPool ?: return false
-        requestAlertFocus()
-        return pool.play(id, 1f, 1f, 1, 0, 1f) != 0
+    /** App 啟動 / 設定變更時預先載入嗶嗶聲 */
+    private fun ensureBeepClip(): Clip? {
+        beepClip?.let { return it }
+        if (beepClipError != null) return null
+        return try {
+            val key = io.flutter.FlutterInjector.instance().flutterLoader().getLookupKeyForAsset("assets/sounds/beep.wav")
+            val bytes = assets.open(key).use { it.readBytes() }
+            makeClip(bytes, "beep.wav").also { beepClip = it; if (it == null) beepClipError = "載入失敗" }
+        } catch (e: Exception) {
+            beepClipError = "${e.javaClass.simpleName}: ${e.message}"
+            nativeLog("提醒聲音：beep.wav 預先載入失敗 $beepClipError")
+            null
+        }
+    }
+
+    /** 輸出裝置類型 → 中文 */
+    private fun deviceName(type: Int?): String = when (type) {
+        null -> "未知"
+        android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER -> "手機喇叭"
+        android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE -> "聽筒（講電話的小喇叭，音量很小）"
+        android.media.AudioDeviceInfo.TYPE_BLUETOOTH_A2DP -> "藍牙"
+        android.media.AudioDeviceInfo.TYPE_BLUETOOTH_SCO -> "藍牙通話（SCO）"
+        android.media.AudioDeviceInfo.TYPE_WIRED_HEADPHONES, android.media.AudioDeviceInfo.TYPE_WIRED_HEADSET -> "有線耳機"
+        android.media.AudioDeviceInfo.TYPE_USB_DEVICE, android.media.AudioDeviceInfo.TYPE_USB_HEADSET, android.media.AudioDeviceInfo.TYPE_USB_ACCESSORY -> "USB"
+        26, 27 -> "藍牙（LE）" // TYPE_BLE_HEADSET / TYPE_BLE_SPEAKER
+        else -> "裝置類型 $type"
+    }
+
+    // v2.0.6：提醒聲音固定從手機喇叭播出（不走藍牙、不走聽筒）。
+    //   開車時試聽聽得到、實際提醒聽不到；固定喇叭可避開車機藍牙喚醒吃掉開頭、或系統把聲音導到聽筒／其他裝置。
+    //   Google 即時語音（預先合成還沒好時才用）無法指定裝置，仍由系統決定。
+    private fun speakerDevice(): android.media.AudioDeviceInfo? = try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val am = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
+            am.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)
+                .firstOrNull { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
+        } else null
+    } catch (_: Exception) { null }
+
+    private fun forceSpeaker(t: android.media.AudioTrack) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) speakerDevice()?.let { t.setPreferredDevice(it) }
+    }
+
+    /**
+     * 播放預先載入的聲音；0.4 秒後檢查有沒有真的播出。
+     * 沒有播出（位置沒前進）時呼叫 fallback，並寫入 log。回傳 false 表示這次無法開始播放。
+     */
+    private fun playClip(clip: Clip, label: String, fallback: () -> Unit): Boolean {
+        val t = clip.track
+        return try {
+            if (t.playState != android.media.AudioTrack.PLAYSTATE_STOPPED) t.stop()
+            t.reloadStaticData() // 從頭播放
+            forceSpeaker(t)
+            requestAlertFocus()
+            t.play()
+            mainHandler.postDelayed({
+                try {
+                    val pos = t.playbackHeadPosition
+                    val dev = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) deviceName(t.routedDevice?.type) else "未知"
+                    if (pos <= 0) {
+                        nativeLog("提醒聲音：$label 系統沒有播出（播放位置 0，輸出 $dev）→ 改用備用方式")
+                        fallback()
+                    } else {
+                        nativeLog("提醒聲音：$label 已播出 ${minOf(pos, clip.frames) * 1000L / clip.rate} ms，實際輸出 $dev")
+                    }
+                } catch (e: Exception) {
+                    nativeLog("提醒聲音：$label 播放檢查失敗 ${e.javaClass.simpleName}")
+                }
+            }, 400)
+            true
+        } catch (e: Exception) {
+            nativeLog("提醒聲音：$label 播放失敗 ${e.javaClass.simpleName}: ${e.message}")
+            false
+        }
     }
 
     /** 把提醒語音合成成 WAV（文字轉語音就緒後、或設定改成語音時呼叫） */
     private fun cacheVoices() {
         val t = tts ?: return
         if (!ttsReady || ttsNoChinese) return
-        ensureAlertPool() ?: return
         for ((i, text) in wantedVoices.withIndex()) {
-            if (voiceSoundIds.containsKey(text) || voicePending.containsValue(text) || voiceCacheTexts.containsValue(text)) continue
+            if (voiceClips.containsKey(text) || voiceCacheTexts.containsValue(text)) continue
             val f = File(cacheDir, "opview_voice_${text.hashCode().toUInt()}.wav")
             val uid = "cache:$i:${text.hashCode()}"
             voiceCacheTexts[uid] = text
@@ -334,11 +440,14 @@ class MainActivity: FlutterActivity() {
 
     private fun onVoiceCached(uid: String) {
         val text = voiceCacheTexts.remove(uid) ?: return
-        val pool = alertPool ?: return
         val f = File(cacheDir, "opview_voice_${text.hashCode().toUInt()}.wav")
         if (!f.exists() || f.length() < 1000) return
         trimWavSilence(f) // 去掉合成語音開頭／結尾的靜音，聲音一觸發就出來
-        voicePending[pool.load(f.absolutePath, 1)] = text
+        makeClip(f.readBytes(), "語音「$text」")?.let { c ->
+            voiceClips.remove(text)?.track?.release()
+            voiceClips[text] = c
+            nativeLog("提醒聲音：已預先合成「$text」，之後直接播放")
+        }
     }
 
     /**
@@ -389,7 +498,7 @@ class MainActivity: FlutterActivity() {
     }
 
     private fun alertAttrs(): android.media.AudioAttributes = android.media.AudioAttributes.Builder()
-        .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
         .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH).build()
 
     /** 目前的聲音輸出：藍牙 / 有線耳機 / USB / 手機喇叭 */
@@ -426,7 +535,7 @@ class MainActivity: FlutterActivity() {
                 am.requestAudioFocus(null, android.media.AudioManager.STREAM_MUSIC,
                     android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
             }
-            // 提醒最長約 2 秒：3 秒後放掉（SoundPool 沒有播完回呼）
+            // 提醒最長約 2 秒：3 秒後放掉（預先載入的 AudioTrack 沒有播完回呼）
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ abandonAlertFocus() }, 3000)
         } catch (_: Exception) {}
     }
@@ -450,18 +559,27 @@ class MainActivity: FlutterActivity() {
         return e.speak(text, android.speech.tts.TextToSpeech.QUEUE_FLUSH, null, "opview-stopgo")
     }
 
-    /** 媒體音量（語音、嗶嗶聲都用導航語音用途，跟著媒體音量） */
+    /** 媒體音量（語音、嗶嗶聲都用媒體用途，跟著媒體音量） */
     private fun mediaVolumeNote(): String = try {
         val am = getSystemService(AUDIO_SERVICE) as android.media.AudioManager
         val v = am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC)
         val m = am.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
         val route = outputRoute()
-        val vol = if (v == 0) "媒體音量 0/$m（靜音，聽不到，請調高媒體音量）" else "媒體音量 $v/$m"
-        "$vol；輸出：$route"
+        val muted = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && am.isStreamMute(android.media.AudioManager.STREAM_MUSIC)
+        val vol = if (v == 0 || muted) "媒體音量 $v/$m（靜音，聽不到，請調高媒體音量）" else "媒體音量 $v/$m"
+        val mode = when (am.mode) {
+            android.media.AudioManager.MODE_NORMAL -> ""
+            android.media.AudioManager.MODE_IN_CALL -> "；通話中（聲音可能被系統壓掉）"
+            android.media.AudioManager.MODE_IN_COMMUNICATION -> "；網路通話模式（聲音可能改走聽筒）"
+            android.media.AudioManager.MODE_RINGTONE -> "；來電響鈴中"
+            else -> "；音訊模式 ${am.mode}"
+        }
+        val out = if (route == "手機喇叭") "手機喇叭" else "手機喇叭（固定，不走$route）"
+        "$vol；輸出：$out$mode"
     } catch (_: Exception) { "媒體音量未知" }
 
     // 嗶嗶聲：程式產生兩聲 1 kHz 短音（各 130 ms，間隔 90 ms），用 AudioTrack 播放。
-    // 音訊用途與語音相同（導航語音），音量跟著「媒體音量」，聽得到語音就聽得到嗶聲。
+    // 音訊用途與語音相同（媒體），音量跟著「媒體音量」，聽得到語音就聽得到嗶聲。
     // （原本用 ToneGenerator＋通知音量：通知音量為 0、勿擾模式、部分機型會完全沒有聲音。）
     private var beepTrack: android.media.AudioTrack? = null
 
@@ -485,7 +603,7 @@ class MainActivity: FlutterActivity() {
             beepTrack?.release()
             beepTrack = null
             val attrs = android.media.AudioAttributes.Builder()
-                .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
                 .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
             val format = android.media.AudioFormat.Builder()
                 .setSampleRate(rate)
@@ -498,6 +616,7 @@ class MainActivity: FlutterActivity() {
                 track.release()
                 return "AudioTrack 初始化失敗（write=$written, state=${track.state}）"
             }
+            forceSpeaker(track)
             track.play()
             beepTrack = track
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
@@ -553,8 +672,10 @@ class MainActivity: FlutterActivity() {
 
     override fun onDestroy() {
         OpviewKeepAliveService.stop(this)
-        alertPool?.release()
-        alertPool = null
+        beepClip?.track?.release()
+        beepClip = null
+        voiceClips.values.forEach { it.track.release() }
+        voiceClips.clear()
         wavPlayer?.release()
         wavPlayer = null
         beepTrack?.release()
@@ -832,7 +953,7 @@ class MainActivity: FlutterActivity() {
                 "alertSoundPrepare" -> {
                     val mode = call.argument<String>("mode") ?: "mute"
                     wantedVoices = call.argument<List<String>>("texts") ?: emptyList()
-                    if (mode != "mute") ensureAlertPool()
+                    if (mode != "mute") ensureBeepClip()
                     if (mode == "voice") {
                         if (tts == null) speakAlert("")   // 只初始化引擎（空字串不會發聲）
                         cacheVoices()
@@ -843,16 +964,16 @@ class MainActivity: FlutterActivity() {
                     val mode = call.argument<String>("mode") ?: "beep"
                     val text = call.argument<String>("text") ?: ""
                     val vol = mediaVolumeNote()
-                    ensureAlertPool()
                     if (mode == "voice") {
-                        val id = voiceSoundIds[text]
-                        if (id != null && playPooled(id)) {
+                        val clip = voiceClips[text]
+                        if (clip != null && playClip(clip, "語音「$text」") { tts?.let { speakNow(it, text) } ?: beepFallback() }) {
                             result.success("Google 語音（預先合成）播放中；$vol")
                         } else {
                             result.success("Google 語音：${speakAlert(text)}（即時合成）；$vol")
                         }
                     } else {
-                        if (beepLoaded && playPooled(beepSoundId)) {
+                        val bc = ensureBeepClip()
+                        if (bc != null && playClip(bc, "嗶嗶聲") { playAssetWav("assets/sounds/beep.wav")?.let { e -> nativeLog("提醒聲音：備用 MediaPlayer 失敗 $e"); beepAlert() } }) {
                             result.success("嗶嗶聲（預先載入）播放中；$vol"); return@setMethodCallHandler
                         }
                         val asset = call.argument<String>("asset") ?: "assets/sounds/beep.wav"

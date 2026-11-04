@@ -7,9 +7,11 @@
 //     （spmaster 的 green_light.png / lead_depart.png 是 git LFS 指標檔，不是實際圖片）。
 //   - 文字改為中文；尺寸依畫面高度等比（sunnypilot 為固定 250 px 半徑）。
 //   - 有 comma 警示時：sunnypilot（_allow_e2e_alerts）會整個隱藏；opview 刻意不同——
-//     底部橫幅警示（small / mid，例如「自動煞車維持中」會在停等時一直顯示）時照常顯示，
-//     依橫幅的實際位置（alert_renderer.dart 的 alertBannerRect）把圓形移到橫幅上方、必要時縮小，
-//     保證不重疊；空間真的不夠（半徑 < 28）才暫時不顯示。只有全螢幕警示（full）才隱藏。
+//     底部橫幅警示（small / mid，例如「自動煞車維持中」會在停等時一直顯示）時照常顯示。
+//   - 位置（v2.0.4）：固定在道路畫面右上角，不再跟著橫幅移動（實測橫幅出現／消失時圓形跳動，且右側中間會被橫幅干擾）。
+//     直向：上緣 8 dp；橫向：上緣 48 dp（避開上方 TDX 跑馬燈、全螢幕的叫回按鈕）；右緣 12 dp。
+//     橫幅特別高、仍會碰到時只縮小不移動（alert_renderer.dart 的 alertBannerRect），半徑 < 28 才暫時不顯示。
+//     只有全螢幕警示（full）才隱藏。
 //     聲音不受警示影響（由 app.dart 依偵測事件播放）。
 
 import 'dart:async';
@@ -71,25 +73,25 @@ class _StopGoOverlayState extends State<StopGoOverlay> {
       }));
   }
 
-  /// 圓形位置（left, top, 半徑）。預設在右側中間（同 Alignment(.82, .08)）；
-  /// 和底部橫幅重疊時移到橫幅上方（上緣留 [topMin]），放不下就縮小；半徑 < 28 時回傳 null（不顯示）。
+  /// 圓形位置（left, top, 半徑）：固定在道路畫面右上角；碰到底部橫幅時只縮小、不移動，半徑 < 28 回傳 null。
   (double, double, double)? _place(BuildContext context, Size size, double rDefault, Rect? bannerGlobal) {
-    const gap = 8.0, topMin = 44.0, rMin = 28.0; // topMin：避開左上「opview」字樣與上方 TDX 跑馬燈
-    double leftFor(double r) => (size.width - 2 * r) * (1 + .82) / 2;
-    final r0 = math.min(rDefault, size.height / 2);
-    final top0 = (size.height - 2 * r0) * (1 + .08) / 2;
-    if (bannerGlobal == null) return (leftFor(r0), top0, r0);
-    final me = context.findRenderObject();
-    if (me is! RenderBox || !me.hasSize) return (leftFor(r0), top0, r0);
-    final banner = Rect.fromPoints(me.globalToLocal(bannerGlobal.topLeft), me.globalToLocal(bannerGlobal.bottomRight));
-    final circle0 = Rect.fromLTWH(leftFor(r0), top0, 2 * r0, 2 * r0);
-    if (!circle0.inflate(gap).overlaps(banner)) return (leftFor(r0), top0, r0); // 沒重疊：維持原位
-    // 移到橫幅上方：先保留上緣 topMin，放不下再貼近上緣
-    for (final top in [topMin, 6.0]) {
-      final r = math.min(r0, (banner.top - gap - top) / 2);
-      if (r >= rMin) return (leftFor(r), top, r);
+    const gap = 8.0, right = 12.0, rMin = 28.0;
+    final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
+    final top = portrait ? 8.0 : 48.0; // 橫向避開上方 TDX 跑馬燈與全螢幕叫回按鈕
+    var r = math.min(rDefault, (size.height - top - gap) / 2);
+    if (bannerGlobal != null) {
+      final me = context.findRenderObject();
+      if (me is RenderBox && me.hasSize) {
+        final bannerTop = me.globalToLocal(bannerGlobal.topLeft).dy;
+        final left = size.width - 2 * r - right;
+        final bannerLeft = me.globalToLocal(bannerGlobal.topLeft).dx;
+        final bannerRight = me.globalToLocal(bannerGlobal.bottomRight).dx;
+        final overlapsX = left < bannerRight && left + 2 * r > bannerLeft;
+        if (overlapsX && top + 2 * r > bannerTop - gap) r = (bannerTop - gap - top) / 2;
+      }
     }
-    return null;
+    if (r < rMin) return null;
+    return (size.width - 2 * r - right, top, r);
   }
 
   Widget _circle(double r, StopGoKind? alert, double? standstill) {

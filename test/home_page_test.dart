@@ -41,6 +41,9 @@ void main() {
     expect(m.byBrand['Toyota'], ['TOYOTA_COROLLA_TSS2', 'TOYOTA_RAV4_TSS2']);
     expect(m.brandOf('TOYOTA_COROLLA_TSS2'), 'Toyota');
     expect(parseModels({'model_list': {}, 'selected_model': ''}).selected, '');
+    // dp 沒有 apply_hint → 預設「重新開機後生效」；sp opviewd 帶 apply_hint → 直接顯示
+    expect(parseModels({'model_list': {}, 'selected_model': ''}).applyText, defaultApplyHint);
+    expect(parseModels({'model_list': {}, 'selected_model': '', 'apply_hint': '下次發動時生效'}).applyText, '下次發動時生效');
   });
 
   test('auto-enter-opview and TDX toggles persist', () async {

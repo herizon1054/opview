@@ -6,17 +6,25 @@
 // 寫入的是 comma 參數 dp_dev_model_selected；launch_chffrplus.sh 的 set_model_fingerprint 在開機啟動時讀取，
 // 設定 FINGERPRINT / SKIP_FW_QUERY → **comma 重新開機後才生效**。
 // serverd 是 always_run，offroad 也能用。
+//
+// sunnypilot：opviewd（同樣 port 5088，開啟 OpviewEnabled 後 offroad 也執行）提供相同的兩個端點，
+// 寫入 CarPlatformBundle，下次發動生效（不需重開機）；回應多帶 "apply_hint"（何時生效），opview 直接顯示。
 
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 const commaSettingsPort = 5088;
 const autoModel = '[AUTO]';
+const defaultApplyHint = 'comma 重新開機後生效';
 
 class CommaModels {
   final Map<String, List<String>> byBrand; // 品牌 → 車型（已排序）
   final String selected;                   // 空字串 = 自動偵測
-  const CommaModels(this.byBrand, this.selected);
+  final String? applyHint;                 // 變更後何時生效（sp opviewd 提供；dp 沒有 → 用預設文字）
+  const CommaModels(this.byBrand, this.selected, {this.applyHint});
+
+  /// 變更車型後的生效說明
+  String get applyText => applyHint ?? defaultApplyHint;
 
   /// 已選車型所屬品牌；找不到（或自動偵測）回傳 null
   String? brandOf(String model) {
@@ -46,7 +54,9 @@ CommaModels parseModels(Map<String, dynamic> json) {
     });
   }
   final sorted = Map.fromEntries(out.entries.toList()..sort((a, b) => a.key.compareTo(b.key)));
-  return CommaModels(sorted, (json['selected_model'] ?? '').toString());
+  final hint = json['apply_hint'];
+  return CommaModels(sorted, (json['selected_model'] ?? '').toString(),
+      applyHint: hint is String && hint.isNotEmpty ? hint : null);
 }
 
 // 註：URL 一律用 Uri(host: …) 組，IPv6（含 link-local 的 %wlan0）會自動加中括號與編碼；

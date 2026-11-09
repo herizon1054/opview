@@ -226,7 +226,13 @@ class ConnectionManager {
 
   /// first device found → connect (or update host if cached attempt is still in-flight)
   void _onDeviceFound(DiscoveredDevice device) {
-    if (_replaced || _paused || _uiState.isConnected) return; // already connected via cached host
+    if (_paused) {
+      // 背景時找到：記住 IP 並結束這次搜尋（_discovering 歸零），回到前景時 reconnect() 會重新搜尋
+      _lastKnownHost = device.host;
+      _stopDiscovery();
+      return;
+    }
+    if (_replaced || _uiState.isConnected) return; // already connected via cached host
     _host = device.host;
     _lastKnownHost = device.host;
     _setStatus('found ${device.displayName} at ${device.host}');
@@ -646,6 +652,9 @@ class ConnectionManager {
     if (_paused) return;
     _paused = true;
     _setStatus('paused');
+    // 一定要結束搜尋：否則 _discovering 停在 true，回到前景後 _startDiscovery() 直接 return，
+    // 永遠停在「searching for comma device…」（手機開熱點給 comma 時切到設定頁 / 背景就會遇到）
+    _stopDiscovery();
     _teardown();
   }
 
@@ -656,6 +665,7 @@ class ConnectionManager {
     if (automatic && _replaced) return;
     _replaced = false;
     _setStatus('reconnecting…');
+    _stopDiscovery(); // 重新開始一次乾淨的搜尋（mDNS 只會對同一台裝置回報一次）
     _teardown();
     _retryCount = 0;
     _host = null;

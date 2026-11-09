@@ -66,6 +66,16 @@ void main() {
       expect(p.offroad, isNull);
     });
 
+    test('sp（有 opviewd）：:5088/api/init 回 branch=sp → sp，並取得 isOffroad', () async {
+      final c = MockClient((r) async {
+        expect(r.url.path, '/api/init');
+        return http.Response('{"branch": "sp", "opview": true, "isOffroad": false}', 200);
+      });
+      final p = await probeComma('sp2.test', client: c);
+      expect(p.branch, CommaBranch.sp);
+      expect(p.offroad, isFalse);
+    });
+
     test('連不到 comma（逾時 / 網路不通）→ unknown', () async {
       final c = MockClient((_) async => throw http.ClientException('No route to host'));
       expect((await probeComma('down.test', client: c)).branch, CommaBranch.unknown);

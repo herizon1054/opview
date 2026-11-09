@@ -164,7 +164,7 @@ class _HomePageState extends State<HomePage> {
       _lastModelsHost = host;
       setState(() => _applyModels(host, m));
       messenger.showSnackBar(SnackBar(content: Text(
-          '已設定為「${target ?? '自動偵測'}」，comma 重新開機後生效')));
+          '已設定為「${target ?? '自動偵測'}」，${m.applyText}')));
     } catch (e) {
       messenger.showSnackBar(SnackBar(content: Text('設定失敗：$e')));
     } finally {
@@ -249,8 +249,8 @@ class _HomePageState extends State<HomePage> {
               style: const TextStyle(color: Colors.orangeAccent)),
         ]), style: const TextStyle(fontSize: 14)),
         if (_models != null)
-          const Text('變更車型後需重新開機 comma 才會生效',
-            style: TextStyle(fontSize: 11, color: Colors.white38)),
+          Text('變更車型後：${_models!.applyText}',
+            style: const TextStyle(fontSize: 11, color: Colors.white38)),
         if (_status != null)
           Padding(padding: const EdgeInsets.only(top: 4),
             child: Text(_status!, maxLines: 1, overflow: TextOverflow.ellipsis,

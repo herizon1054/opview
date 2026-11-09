@@ -59,8 +59,9 @@ enum CommaBranch {
 
 const sunnylinkUrl = 'https://www.sunnylink.ai/';
 
-/// 判斷分支並取得 offroad 狀態（offroad 只有 dp 拿得到）。
+/// 判斷分支並取得 offroad 狀態。
 ///   1. GET :5088/api/init 回 JSON 且有 dp_dev_dashy → dp（isOffroad 一併取得）
+///      回 JSON 且 branch == "sp" → sp（sunnypilot 的 opviewd，isOffroad 一併取得）
 ///   2. :5088 連線被拒（主機在、但沒有 dashy）→ sp；
 ///      webrtcd 有開時再用 GET :5001/schema?services=selfdriveStateSP 確認（sp 專屬 cereal service）
 ///   3. 逾時 / 其他錯誤 → unknown（未連線）
@@ -74,6 +75,10 @@ Future<({CommaBranch branch, bool? offroad})> probeComma(String host, {http.Clie
       if (j is Map && j.containsKey('dp_dev_dashy')) {
         final off = j['isOffroad'];
         return (branch: CommaBranch.dp, offroad: off is bool ? off : null);
+      }
+      if (j is Map && j['branch'] == 'sp') {
+        final off = j['isOffroad'];
+        return (branch: CommaBranch.sp, offroad: off is bool ? off : null);
       }
     }
     return (branch: CommaBranch.unknown, offroad: null);
@@ -158,9 +163,12 @@ Future<void> openOpSettings(BuildContext context, String? host, {bool forceAsk =
       blocked = decideOpSettings(s, live ? null : probe.offroad);
       url = Uri(scheme: 'http', host: target, port: opSettingsPort).toString();
     case CommaBranch.sp:
-      // sunnypilot 沒有本機 offroad 查詢介面；opview 有即時資料時照樣擋行駛中，
-      // 沒有即時資料時放行（sunnylink 是雲端網頁，comma 有回應代表已連上同一網路）
-      blocked = live ? decideOpSettings(s, null) : null;
+      // sunnypilot 有 opviewd（:5088/api/init 帶 isOffroad）時與 dp 相同規則；
+      // 沒有 opviewd（舊版 sp）時：opview 有即時資料照樣擋行駛中，沒有即時資料放行
+      // （sunnylink 是雲端網頁，comma 有回應代表已連上同一網路）
+      blocked = probe.offroad != null
+          ? decideOpSettings(s, live ? null : probe.offroad)
+          : (live ? decideOpSettings(s, null) : null);
       url = sunnylinkUrl;
     case CommaBranch.unknown:
       blocked = opSettingsNotConnected;

@@ -4,6 +4,7 @@ import '../../../services/parking/parking_catalog.dart';
 import '../../../services/parking/parking_config.dart';
 import '../../../services/parking/parking_startup.dart';
 import '../../../services/parking/parking_quota_store.dart';
+import '../../../services/tdx/tdx_traffic_service.dart';
 import 'parking_test_dialog.dart';
 
 Future<void> showParkingSettings(BuildContext context) => showDialog<void>(
@@ -29,6 +30,7 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
   void initState() {
     super.initState();
     _startup.addListener(_updated);
+    TdxTrafficService.instance.status.addListener(_updated);
     _load();
   }
 
@@ -61,7 +63,7 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
 
   Future<void> _save() async {
     if (_enabled && (_id.text.trim().isEmpty || _secret.text.trim().isEmpty)) {
-      setState(() => _error = '必須填入 Client ID 與 Client Secret 才能啟用');
+      setState(() => _error = '必須填入 Client ID 與 Client Secret 才能啟用停車查詢');
       return;
     }
     setState(() => _saving = true);
@@ -87,6 +89,7 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
   @override
   void dispose() {
     _startup.removeListener(_updated);
+    TdxTrafficService.instance.status.removeListener(_updated);
     _id.dispose();
     _secret.dispose();
     super.dispose();
@@ -94,7 +97,7 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-    title: const Text('停車查詢設定'),
+    title: const Text('TDX 金鑰與停車查詢'),
     content: SizedBox(
       width: 420,
       child: SingleChildScrollView(
@@ -102,15 +105,14 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SwitchListTile(
+            // 金鑰：TDX 路況顯示與停車查詢共用
+            const ListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text('啟用停車查詢'),
-              value: _enabled,
-              onChanged: !_ready || _saving
-                  ? null
-                  : (v) => setState(() => _enabled = v),
+              leading: Icon(Icons.vpn_key_outlined),
+              title: Text('TDX 金鑰'),
+              subtitle: Text('路況顯示與停車查詢共用；必須使用自己的 Client ID 與 Client Secret，不提供匿名模式。'
+                  '只開路況、不開停車查詢也可以儲存金鑰。'),
             ),
-            const Text('必須使用自己的 TDX Client ID 與 Client Secret，不提供匿名模式。'),
             TextField(
               controller: _id,
               enabled: _ready && !_saving,
@@ -125,6 +127,25 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
               autocorrect: false,
               enableSuggestions: false,
               decoration: const InputDecoration(labelText: 'Client Secret（必填）'),
+            ),
+            const SizedBox(height: 12),
+            Row(children: [
+              const Icon(Icons.traffic_outlined, size: 18, color: Colors.white70),
+              const SizedBox(width: 8),
+              Expanded(child: Text('路況：${TdxTrafficService.instance.status.value}',
+                style: const TextStyle(fontSize: 12, color: Colors.white70))),
+            ]),
+            const Divider(height: 24),
+            // 停車查詢
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              secondary: const Icon(Icons.local_parking),
+              title: const Text('啟用停車查詢'),
+              subtitle: const Text('附近停車場與空位，顯示在直向資訊區'),
+              value: _enabled,
+              onChanged: !_ready || _saving
+                  ? null
+                  : (v) => setState(() => _enabled = v),
             ),
             DropdownButton<String>(
               isExpanded: true,
@@ -180,7 +201,8 @@ class _ParkingSettingsDialogState extends State<ParkingSettingsDialog> {
             ),
             const SizedBox(height: 8),
             const Text(
-              '空位仍須按「查詢周遭車位」，30 秒防連點。位置快取與 Token 會重用；靜態分頁與空位共用每分鐘 5 筆節流。',
+              '空位仍須按「查詢周遭車位」，30 秒防連點。位置快取與 Token 會重用；靜態分頁、空位與 TDX 路況共用每分鐘 5 筆節流'
+              '（路況每分鐘最多 2 筆，停車查詢或下載進行中路況會暫停讓出額度）。',
             ),
             const SizedBox(height: 8),
             const Text('路外另接新北市／新竹市政府資料。新北「回報 N 位*」未附來源時間，請以現場為準。'),

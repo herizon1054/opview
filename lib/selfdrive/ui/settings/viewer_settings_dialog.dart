@@ -7,7 +7,8 @@ import 'parking_settings_dialog.dart';
 import 'package:opview/services/stop_go_alerts.dart';
 import 'package:opview/services/alert_sound.dart';
 import '../onroad/stop_go_overlay.dart' show stopGoSettingIcon;
-import 'package:opview/services/tdx_support.dart';
+import 'package:opview/services/tdx/tdx_traffic_service.dart';
+import 'package:opview/services/parking/parking_config.dart';
 
 // 分享 / 清除 log 的結果文字（顯示在對話框底部）
 final _logResult = ValueNotifier<String?>(null);
@@ -19,7 +20,8 @@ class ViewerSettingsDialog extends StatelessWidget {
   const ViewerSettingsDialog({super.key, required this.settings, this.opHost});
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-    listenable: Listenable.merge([settings, system.pipSupported, system.brightnessSupported, _logResult, tdxSupport]),
+    listenable: Listenable.merge([settings, system.pipSupported, system.brightnessSupported, _logResult,
+      TdxTrafficService.instance.status, ParkingConfig.instance]),
     builder: (context, _) => AlertDialog(
       title: const Text('手機顯示設定'),
       content: SizedBox(width: 420, child: SingleChildScrollView(child: Column(
@@ -33,20 +35,36 @@ class ViewerSettingsDialog extends StatelessWidget {
             ], onChanged: (v) { if (v != null) settings.setLayout(v); }),
           SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('公制 km/h'),
             value: settings.metric, onChanged: settings.setMetric),
+          // 交通部 TDX：路況與停車共用同一組金鑰與每分鐘 5 次額度（手機端抓取，不需要 comma 分支支援）
+          const Divider(),
+          const Text('交通部 TDX'),
+          const Text('路況顯示與停車查詢共用同一組金鑰與每分鐘 5 次額度，皆使用手機定位與手機網路。',
+            style: TextStyle(fontSize: 12, color: Colors.white54)),
+          ListTile(contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.vpn_key_outlined,
+              color: ParkingConfig.instance.hasCredentials ? null : Colors.orangeAccent),
+            title: const Text('TDX 金鑰'),
+            subtitle: Text(ParkingConfig.instance.hasCredentials
+                ? '已設定（路況、停車共用）'
+                : '尚未設定：路況與停車查詢都需要 Client ID / Client Secret',
+              style: ParkingConfig.instance.hasCredentials
+                  ? null : const TextStyle(color: Colors.orangeAccent)),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => showParkingSettings(context)),
+          SwitchListTile(contentPadding: EdgeInsets.zero,
+            secondary: const Icon(Icons.traffic_outlined),
+            title: const Text('TDX 路況顯示'),
+            subtitle: Text('前方車速與路況事件跑馬燈'
+                '${settings.tdx ? '\n狀態：${TdxTrafficService.instance.status.value}' : ''}'),
+            value: settings.tdx, onChanged: settings.setTdx),
           ListTile(contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.local_parking), title: const Text('附近停車場與空位'),
-            subtitle: const Text('手機定位、TDX 金鑰與直向資訊區'),
+            subtitle: Text(ParkingConfig.instance.enabled
+                ? '已開啟｜半徑 ${ParkingConfig.instance.radius} 公尺，顯示在直向資訊區'
+                : '已關閉｜點此開啟與設定'),
+            trailing: const Icon(Icons.chevron_right),
             onTap: () => showParkingSettings(context)),
-          // 目前連線的 comma 分支沒有 tdx service：開關停用並註明
-          if (tdxSupport.value == false)
-            const SwitchListTile(contentPadding: EdgeInsets.zero, title: Text('TDX 路況顯示'),
-              subtitle: Text('$tdxUnsupportedText（comma 端沒有 tdx 服務）',
-                style: TextStyle(color: Colors.orangeAccent)),
-              value: false, onChanged: null)
-          else
-            SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('TDX 路況顯示'),
-              subtitle: const Text('前方車速與路況事件跑馬燈（只影響手機端顯示）'),
-              value: settings.tdx, onChanged: settings.setTdx),
+          const Divider(),
           SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('打開 App 自動進入 opview'),
             subtitle: const Text('開啟後跳過主畫面，直接進入 opview 畫面'),
             value: settings.autoEnterOpview, onChanged: settings.setAutoEnterOpview),

@@ -1,11 +1,9 @@
-// 裝置設定只允許 offroad 或 P 檔（未連線顯示「未連線」）；dp / sp 分支判斷；TDX 支援判斷
-import 'dart:convert';
+// 裝置設定只允許 offroad 或 P 檔（未連線顯示「未連線」）；dp / sp 分支判斷
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:opview/selfdrive/ui/settings/op_settings_link.dart';
 import 'package:opview/selfdrive/ui/ui_state.dart';
-import 'package:opview/system/webrtc/webrtcd_api.dart';
 
 UIState _state({required bool connected, bool started = true, String gear = 'drive', bool fresh = true}) {
   return UIState()
@@ -80,24 +78,5 @@ void main() {
       final c = MockClient((_) async => throw http.ClientException('No route to host'));
       expect((await probeComma('down.test', client: c)).branch, CommaBranch.unknown);
     });
-  });
-
-  test('branch without tdx: request falls back and host is marked unsupported', () async {
-    final client = MockClient((request) async {
-      final body = jsonDecode(request.body) as Map<String, dynamic>;
-      if ((body['bridge_services_out'] as List).contains('tdx')) return http.Response('KeyError', 500);
-      return http.Response('{"sdp":"answer","type":"answer"}', 200);
-    });
-    expect(hostSupportsOptionalServices('notdx.test'), isNull);
-    await postStream('notdx.test', 'offer', client: client);
-    expect(hostSupportsOptionalServices('notdx.test'), isFalse);
-    client.close();
-  });
-
-  test('branch with tdx is marked supported', () async {
-    final client = MockClient((_) async => http.Response('{"sdp":"answer","type":"answer"}', 200));
-    await postStream('withtdx.test', 'offer', client: client);
-    expect(hostSupportsOptionalServices('withtdx.test'), isTrue);
-    client.close();
   });
 }

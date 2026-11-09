@@ -58,12 +58,12 @@ void main() {
     s.dispose();
   });
 
-  test('cereal adapter dispatches tdx', () {
+  test('cereal adapter ignores tdx from the comma (TDX is built into opview now)', () {
     final s = UIState();
     CerealAdapter().apply(s, '{"type":"tdx","logMonoTime":1,"valid":true,'
         '"data":{"nextSpeed":45,"congestion":"congested","events":[]}}');
-    expect(s.tdxNextSpeedKph, 45);
-    expect(s.tdxCongestion, 'congested');
+    expect(s.tdxNextSpeedKph, isNull);
+    expect(s.tdxCongestion, 'unknown');
     s.dispose();
   });
 

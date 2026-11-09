@@ -51,24 +51,21 @@ void main() {
     }
   });
 
-  test('optional service fallback retains new protocol and camera', () async {
+  test('tdx is no longer requested from the comma (built into opview)', () async {
     var requests = 0;
     final client = MockClient((request) async {
       requests++;
       final body = jsonDecode(request.body) as Map<String, dynamic>;
       expect(body['initCamera'], 'road');
-      if (requests == 1) return http.Response('unknown service', 500);
       expect(body['bridge_services_out'], isNot(contains('tdx')));
       return http.Response('{"sdp":"answer","type":"answer"}', 200);
     });
-    await postStream('fallback.test', 'offer', client: client);
-    expect(requests, 2);
-    await postStream('fallback.test', 'offer', client: client);
-    expect(requests, 3);
+    await postStream('notdx.test', 'offer', client: client);
+    expect(requests, 1);
     client.close();
   });
 
-  test('outdated comma webrtcd (500 for both requests) is reported clearly', () async {
+  test('outdated comma webrtcd (500) is reported clearly', () async {
     var requests = 0;
     final client = MockClient((_) async {
       requests++;
@@ -78,7 +75,7 @@ void main() {
         throwsA(isA<WebrtcdHttpException>()
             .having((e) => e.outdatedServer, 'outdatedServer', isTrue)
             .having((e) => e.toString(), 'message', contains('未更新'))));
-    expect(requests, 2); // 新格式+tdx、新格式；不會改送舊格式
+    expect(requests, 1); // 只送新格式；不會改送舊格式、也不再有 tdx 退回重試
     client.close();
   });
 

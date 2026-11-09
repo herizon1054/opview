@@ -263,7 +263,7 @@ class _ParkingPanelState extends State<ParkingPanel>
                     ),
                   ),
                   IconButton(
-                    tooltip: '停車查詢設定',
+                    tooltip: 'TDX 金鑰與停車查詢設定',
                     onPressed: _busy
                         ? null
                         : () => showParkingSettings(context),

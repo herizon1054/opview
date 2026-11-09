@@ -1,5 +1,5 @@
 // TDX 路況事件跑馬燈（畫面上方置中的小膠囊）
-// 資料來源：dplcc tdx service 的 events（格式同 tici hud_renderer：「目前: a / b」）
+// 資料來源：opview 內建 TDX（lib/services/tdx/）的 events（格式同 tici hud_renderer：「目前: a / b」）
 // tici 版事件是貼在畫面下方 Performance 列上；opview 改放上方。
 // 版型參考 CommaView 上方的狀態提示（例如 Changing Lanes）：小字、膠囊寬度貼合文字、置中。
 // 文字放得下就整段靜止顯示；超過 maxWidth 才固定寬度、循環捲動。
@@ -38,7 +38,7 @@ class _TdxMarqueeState extends State<TdxMarquee> with SingleTickerProviderStateM
   @override
   void didUpdateWidget(TdxMarquee old) {
     super.didUpdateWidget(old);
-    // 事件內容換了（tdxd 每 10 秒在 目前/前方 之間輪替）就從頭捲
+    // 事件內容換了（每 10 秒在 目前/前方 之間輪替）就從頭捲
     if (old.text != widget.text) _textWidth = -1;
   }
 

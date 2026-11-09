@@ -9,7 +9,7 @@ class ViewerSettings extends ChangeNotifier {
   ViewerLayout layout = ViewerLayout.dashboard;
   bool metric = true;
   bool pictureInPicture = false;
-  bool tdx = true; // dplcc TDX 路況顯示（前方車速 + 事件跑馬燈）
+  bool tdx = true; // TDX 路況顯示（opview 手機內建抓取：前方車速 + 事件跑馬燈）
   bool autoFullscreen = false; // 連線後自動收起側欄
   bool autoEnterOpview = false; // 打開 App 直接進入 opview 畫面（跳過主畫面）
   // 停等與起步提醒（移植自 sunnypilot：LeadDepartAlert / GreenLightAlert / StandstillTimer）

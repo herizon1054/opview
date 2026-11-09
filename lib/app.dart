@@ -15,6 +15,7 @@ import 'package:opview/selfdrive/ui/home/home_page.dart';
 import 'package:opview/services/connection_manager.dart';
 import 'package:opview/services/viewer_settings.dart';
 import 'package:opview/services/stop_go_alerts.dart';
+import 'package:opview/services/tdx/tdx_traffic_service.dart';
 import 'package:opview/services/alert_sound.dart';
 import 'package:opview/services/viewer_system.dart' as system;
 import 'package:opview/selfdrive/ui/settings/op_settings_link.dart'
@@ -57,6 +58,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
   void _settingsChanged() {
     _uiState.isMetric = _settings.metric;
     _uiState.tdxEnabled = _settings.tdx;
+    _syncTdx();
     _uiState.modernOverlay = _settings.layout != ViewerLayout.classic;
     StopGoAlerts.instance.configure(greenLight: _settings.greenLightAlert,
         leadDepart: _settings.leadDepartAlert, standstillTimer: _settings.standstillTimer);
@@ -114,9 +116,14 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     debugPrint('[opview] 背景執行結束：回到前景');
   }
 
+  // TDX 路況（手機內建）：只在 opview 畫面、TDX 開啟、串流沒暫停時抓（見 tdx_traffic_service.dart）
+  void _syncTdx() => TdxTrafficService.instance
+      .setActive(_ready && _settings.tdx && !_onHome && !_streamPaused, _uiState);
+
   void _pauseStream() {
     if (_streamPaused) return;
     _streamPaused = true;
+    _syncTdx();
     _connectionManager.pause();
     _updatePipOffer();
   }
@@ -126,6 +133,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     debugPrint('[opview] → home');
     setState(() => _onHome = true);
     _connectionManager.setStreaming(false);
+    _syncTdx();
     _syncBackgroundWish();
     _updatePipOffer();
   }
@@ -135,6 +143,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     debugPrint('[opview] → opview view');
     setState(() => _onHome = false);
     _connectionManager.setStreaming(true);
+    _syncTdx();
     _syncBackgroundWish();
     _updatePipOffer();
   }
@@ -145,6 +154,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     _connectionManager.setStreaming(!_onHome);
     _syncBackgroundWish();
     if (mounted) setState(() => _ready = true);
+    _syncTdx();
   }
 
   @override
@@ -174,6 +184,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     system.setBackgroundKeepAlive(false);
     WidgetsBinding.instance.removeObserver(this);
     ParkingStartup.instance.stop();
+    TdxTrafficService.instance.setActive(false, _uiState);
     _lifecycleEpoch++;
     _uiState.removeListener(_updatePipOffer);
     _settings.removeListener(_settingsChanged);
@@ -202,6 +213,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) _leaveBackground();
     if (state == AppLifecycleState.resumed && _streamPaused) {
       _streamPaused = false;
+      _syncTdx();
       _connectionManager.reconnect(automatic: true);
       _updatePipOffer();
     } else if (state == AppLifecycleState.paused) {

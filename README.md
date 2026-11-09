@@ -43,7 +43,6 @@ opview 在手機上即時顯示 [openpilot](https://github.com/commaai/openpilot
   - 資料延遲時，畫面顯示「資料延遲」，不會繼續顯示過時的車速。
   - 影像卡住時會自動恢復。
 - **相容不同分支**：
-  - comma 端沒有 TDX 服務時，自動改用不含 TDX 的連線，並顯示「此分支不支援 TDX」。
   - comma 端 webrtcd 沒有更新時，會顯示提示。
 
 ### 主畫面
@@ -115,14 +114,20 @@ opview 在手機上即時顯示 [openpilot](https://github.com/commaai/openpilot
   - 小米、OPPO 等手機請把 opview 的省電策略設為「無限制」，並允許自動啟動，否則系統仍可能把它停掉。
 
 ### TDX 路況
-- 需要 comma 端有 TDX 服務（例如 dplcc）。
-- 直向顯示前方車速與路況事件跑馬燈，多筆事件會輪播。
+- **內建在 opview**：手機自己定位、自己向交通部 TDX 抓資料，不再讀 comma 端的 tdx 服務，任何分支都能用。
+- **金鑰**：顯示設定「交通部 TDX → TDX 金鑰」，與停車查詢共用同一組 Client ID / Client Secret（停車查詢可以關著，金鑰有填就好）。
+- **資料**：所在道路（國道、省道，或有即時資料的縣市道路）的路段車速與即時事件，沿 TDX 路段線形往前追 3 公里，
+  只報行車方向上的事件；不在路段上時，報同一條路正前方 1.5 公里內的事件（道路名稱用手機反向地理編碼）。
+- **頻率與流量**：opview 畫面開著時每 60 秒一輪、最多 2 次 API；與停車查詢共用每分鐘 5 次的本機節流，
+  停車查詢進行中路況暫停。路段線形與名稱存在手機，7 天更新一次。沒網路就安靜略過，60 秒後再試。
+- 直向顯示前方車速（前方 3 公里內最慢路段）與路況事件跑馬燈，「目前 / 前方」每 10 秒輪替。
 - 橫向會在道路畫面上顯示通知。
+- 只供顯示，不會送回 comma、不影響控車。
 
 ### 附近停車場與空位（本分支限定）
 - 用手機定位查詢附近的路邊、路外停車場和剩餘車位，顯示在直向資訊區。點選場地會用導航 App 開啟。
 - **資料來源**：
-  - 交通部 TDX：需要自己申請 Client ID / Client Secret，在「附近停車場與空位」裡填入。
+  - 交通部 TDX：需要自己申請 Client ID / Client Secret，在顯示設定「交通部 TDX → TDX 金鑰」填入（與 TDX 路況共用）。
   - 新北市、新竹市政府開放資料。
   - 每筆場地都會標示來源。
 - **搜尋範圍**：半徑 1000／1200 公尺可選（測試模式另有 10 km），以直線距離計算。
@@ -140,8 +145,9 @@ opview 在手機上即時顯示 [openpilot](https://github.com/commaai/openpilot
 |---|---|---|
 | 介面 | 儀表介面 | 儀表介面／原版介面／儀表＋車輛資訊 |
 | 公制 km/h | 開 | 關閉時顯示 mph |
-| 附近停車場與空位 | — | 開關、TDX 金鑰、搜尋半徑；另有測試模式 |
-| TDX 路況顯示 | 開 | 只影響手機端顯示 |
+| 交通部 TDX：TDX 金鑰 | — | 路況顯示與停車查詢共用；未設定時圖示與文字顯示為橘色 |
+| 交通部 TDX：TDX 路況顯示 | 開 | 手機定位抓取前方車速與事件；下方顯示即時狀態 |
+| 交通部 TDX：附近停車場與空位 | — | 開關、搜尋半徑；另有測試模式（與金鑰在同一個設定頁） |
 | 打開 App 自動進入 opview | 關 | 跳過主畫面 |
 | 自動進入全螢幕 | 關 | 連線且畫面開始更新 3 秒後進入全螢幕並轉為橫向 |
 | 前車起步偵測／綠燈起步偵測／車輛停等計時 | 關 | 見上方「停等與起步提醒」 |
@@ -163,7 +169,7 @@ opview 在手機上即時顯示 [openpilot](https://github.com/commaai/openpilot
 
 **需求：**
 - comma 端需要能從 port 5001 連到 `webrtcd`。
-- 建議使用已更新 webrtcd 的 dragonpilot／sunnypilot 分支。這些分支支援 opview 的新版協定：`initCamera`、`clockSync`、TDX 選用服務、精簡 modelV2，以及傳送佇列不會堆積。
+- 建議使用已更新 webrtcd 的 dragonpilot／sunnypilot 分支。這些分支支援 opview 的新版協定：`initCamera`、`clockSync`、精簡 modelV2，以及傳送佇列不會堆積。
 - 原廠 openpilot 也可以使用，但要先依照下方說明啟用 webrtcd。
 
 **在原廠 openpilot 啟用 webrtcd：**
@@ -290,7 +296,8 @@ scripts/release.sh 0.3.0      # 指定版本
 │       ├── stop_go_alerts.dart            # 起步偵測（移植 sunnypilot）＋停等計時
 │       ├── alert_sound.dart               # 提醒聲音
 │       ├── app_log.dart  latency_tracker.dart  webrtc_native_log.dart
-│       ├── viewer_settings.dart  viewer_system.dart  tdx_support.dart  comma_models_api.dart
+│       ├── viewer_settings.dart  viewer_system.dart  comma_models_api.dart
+│       ├── tdx/                           # TDX 路況（手機內建）：tdx_traffic_core 計算、tdx_traffic_service 定位與抓取
 │   │   └── parking/                        # 停車查詢：TDX / 地方政府資料、快取、節流、定位（本分支）
 ├── android/app/src/main/kotlin/org/dragonpilot/opview/
         ├── OpviewKeepAliveService.kt      # 背景執行前景服務（保留起步語音）

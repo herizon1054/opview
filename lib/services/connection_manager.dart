@@ -15,8 +15,6 @@ import 'package:opview/selfdrive/ui/ui_state.dart';
 import 'package:opview/services/discovery.dart';
 import 'package:opview/services/transport.dart';
 import 'package:opview/services/latency_tracker.dart';
-import 'package:opview/services/tdx_support.dart';
-import 'package:opview/system/webrtc/webrtcd_api.dart' show hostSupportsOptionalServices;
 import 'package:opview/services/adapter.dart';
 import 'package:opview/services/impl/mdns_discovery.dart';
 import 'package:opview/services/impl/subnet_scan_discovery.dart';
@@ -133,7 +131,7 @@ class ConnectionManager {
   static const _maxRetries = 3;
   String _streamType = 'road';
 
-  // log：每 10 秒記錄各 service 收到的訊息數（判斷資料有沒有進來、tdx 有沒有在發）
+  // log：每 10 秒記錄各 service 收到的訊息數（判斷資料有沒有進來）
   static final _typeRe = RegExp(r'"type":\s*"(\w+)"');
   // webrtcd 每筆訊息開頭為 {"type": "...", "logMonoTime": N, ...}（巢狀的 type 不會緊接 logMonoTime）
   // webrtcd 控制訊息：開頭即 {"type": "connectionReplaced" | "clockSync" | "disconnect"}
@@ -266,11 +264,6 @@ class ConnectionManager {
         return;
       }
       _retryCount = 0;
-      final tdx = hostSupportsOptionalServices(_host!);
-      if (tdx != null && tdx != tdxSupport.value) {
-        debugPrint('[opview] TDX: ${tdx ? '分支支援 tdx' : tdxUnsupportedText}');
-      }
-      tdxSupport.value = tdx;
       _listenState();
       _setConnected(true);
       _startStats();

@@ -131,16 +131,16 @@ class UIState extends ChangeNotifier {
   // longitudinalPlan
   bool allowThrottle = true;
 
-  // tdx — dplcc 高公局即時路況（custom.Tdx，tdxd 1Hz，只在 onroad 發布）
-  // 存活判斷對齊 tici hud_renderer 的 sm.alive['tdx']：
-  //   SubMaster alive = 距上次收到 < 10 / frequency 秒，services.py tdx = 1Hz → 10 秒
+  // tdx — TDX 即時路況，由 opview 手機端自己抓（lib/services/tdx/tdx_traffic_service.dart，1Hz 呼叫 applyTdx）。
+  // 已不再讀 comma 的 tdx service；資料欄位沿用 custom.Tdx（nextSpeed / congestion / events）。
+  // 超過 10 秒沒更新（手機定位中斷、服務停止）視為過期不顯示。
   static const tdxAliveTimeout = Duration(seconds: 10);
   DateTime? lastTdxAt;
   int _tdxNextSpeedRaw = -1;      // km/h，-1 = 無資料
   String tdxCongestion = 'unknown'; // unknown / smooth / slow / congested
   final List<({String description, bool isCurrentSection})> _tdxEvents = [];
 
-  // 手機端顯示開關（側欄 TDX 按鈕），關閉時照樣接收，只是不顯示
+  // 手機端顯示開關（顯示設定的 TDX 開關）；關閉時服務也會停止抓取
   bool tdxEnabled = true;
 
   bool get _tdxAlive => tdxEnabled && lastTdxAt != null &&
@@ -183,7 +183,7 @@ class UIState extends ChangeNotifier {
         _tdxEvents.add((description: desc, isCurrentSection: e['isCurrentSection'] == true));
       }
     }
-    // no notify — picked up on next modelV2
+    // no notify — picked up on next modelV2（未連線時畫面本來就不顯示 TDX）
   }
 
   /// 斷線時清掉，避免重連後顯示上次的路況（對應 tici 熄火時 _reset_tdx）

@@ -94,9 +94,6 @@ class CerealAdapter implements TelemetryAdapter {
       case 'roadCameraState':
         state.applyRoadCameraState(data);
         return false;
-      case 'tdx':
-        state.applyTdx(data);
-        return false;
       default:
         return false;
     }

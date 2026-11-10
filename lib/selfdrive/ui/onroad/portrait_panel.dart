@@ -4,8 +4,9 @@
 //   │   （v21 移除上方徽章列：ENGAGED / 資料中斷 / EXPERIMENTAL / opview）│
 //   │ TDX 列：前方車速（依壅塞分級上色）＋ 路況分級     │  ← 有 TDX 資料才顯示
 //   │ TDX 事件（施工、事故…，過長自動捲動）            │  ← 有事件才顯示（優先於 LINE）
-//   │ LINE 通知（每則 30 秒，與停車共用時四行）          │  ← 有訊息才出現
-//   │ 附近停車場與空位（按鈕與結果）                    │  ← 與 LINE 共用剩餘高度，任一方消失另一方補滿
+//   │ LINE 通知（每則 30 秒）                          │  ← 有訊息才出現
+//   │ 附近停車場與空位（按鈕與結果）                    │  ← 與 LINE 共用剩餘高度，任一方消失另一方補滿；
+//   │                                                  │     沒查詢時縮成精簡版，查詢中 / 有結果時 LINE 只留兩行
 //   └ （comma 事件 / alert 改顯示在道路畫面底部，見 AugmentedRoadView）┘
 //
 // 原版介面（modernOverlay = false）：原版 HUD 仍疊在影像上，本區只放 TDX 事件與警示。
@@ -38,12 +39,11 @@ class PortraitPanel extends StatelessWidget {
   static const double lineFont = 14 * fontZoom, lineHeight = 1.3, lineMsgGap = 6;
   // v21：LINE 區不再有標題列（「LINE · N 則」改為貼在上邊框的小標籤），上下內距 6
   static const double lineRowH = lineFont * lineHeight, linePadV = 6, lineChrome = 2 * linePadV + 2;
-  // LINE 最小高度（兩行）與目標高度（四行）；與停車共用時 LINE 先拿到四行，停車拿其餘
+  // LINE 最小高度（兩行）：停車查詢使用中時 LINE 只留這麼多
   static const double lineMinH = lineChrome + 2 * lineRowH;
-  static const double lineTargetH = lineChrome + 4 * lineRowH;
   static const lineGreen = Color(0xFF06C755);
-  // 停車面板最小高度（低於此不顯示）；LINE 與停車同時開啟時 LINE 佔剩餘高度的比例
-  static const double parkingMinH = 100, lineShare = .4;
+  // 停車面板（完整版）最小高度；沒查詢時改用精簡版 ParkingPanel.idleHeight
+  static const double parkingMinH = 100;
 
   static const double pad = 16, gap = 12;
   static const double badgeH = 26,
@@ -53,12 +53,37 @@ class PortraitPanel extends StatelessWidget {
   //   v8：寬 = 原本 90%（245）；高 = 原本 150 × 0.624 ≈ 94；上邊距 10、徽章與卡片間距 8
   //   （v13 曾放大 20%，v14 依需求改回）
   //   v20：高度 ×1.2（94 → 約 113），寬度不變（仍依 0.624 的高度計算方向燈欄位與卡片寬）
-  static const double topPad = 10, cardGap = 8;
+  // v21：影像與卡片間的留白 10 → 2（只留一條細縫，空間給下方 LINE / 停車）
+  static const double topPad = 2, cardGap = 8;
   static const double cardWidthScale = .9, cardHeightScale = .624;
   static const double cardHeightZoom = 1.2;
   static const double cardMaxH = 150 * cardHeightScale, cardMinH = 72;
   // v21：卡片實際高度為內容高度的 80%（字級不變，只縮上下留白），約 113 → 90
   static const double cardBoxTrim = .8;
+
+  /// 下方剩餘高度分給 LINE 與停車面板（各自上方間距 8 已算在內），回傳 (LINE 高, 停車高)；0 = 不顯示。
+  ///   LINE 沒有訊息（或沒開）：停車面板全拿；開了 LINE 但停車查詢關閉 → 都不顯示
+  ///   LINE 有訊息、停車關閉：LINE 全拿
+  ///   LINE 有訊息、停車沒在用（沒查詢）：停車縮成精簡版 ParkingPanel.idleHeight，LINE 拿其餘；
+  ///     LINE 連兩行都放不下時只顯示 LINE
+  ///   LINE 有訊息、停車使用中（查詢中 / 有結果）：LINE 只留兩行，停車拿其餘（至少 parkingMinH）；
+  ///     停車放不下時 LINE 讓出，只顯示停車
+  static (double, double) splitRest(double rest, {required bool lineEnabled, required bool hasMessages,
+      required bool parkingOn, required bool parkingActive}) {
+    if (!hasMessages) {
+      if (lineEnabled && !parkingOn) return (0, 0);
+      return (0, rest >= parkingMinH ? rest : 0);
+    }
+    if (!parkingOn) return (rest >= lineMinH ? rest : 0, 0);
+    if (parkingActive) {
+      final parking = rest - lineMinH - 8;
+      if (parking >= parkingMinH) return (lineMinH, parking);
+      return (0, rest >= parkingMinH ? rest : 0);
+    }
+    final line = rest - ParkingPanel.idleHeight - 8;
+    if (line >= lineMinH) return (line, ParkingPanel.idleHeight);
+    return (rest >= lineMinH ? rest : 0, 0);
+  }
 
   static String congestionLabel(String c) => switch (c) {
     'smooth' => '順暢',
@@ -71,7 +96,7 @@ class PortraitPanel extends StatelessWidget {
   Widget build(BuildContext context) => lineEnabled
       // LINE 訊息出現 / 消失、停車查詢開關：重新分配下方空間（不等儀表節流）
       ? ListenableBuilder(
-          listenable: Listenable.merge([LineNotifications.instance, ParkingConfig.instance]),
+          listenable: Listenable.merge([LineNotifications.instance, ParkingConfig.instance, ParkingPanel.active]),
           builder: (context, _) => _layout(),
         )
       : _layout();
@@ -108,28 +133,13 @@ class PortraitPanel extends StatelessWidget {
           (showCard ? cardBoxH : 0) +
           (tdxSpeed != null ? gap + tdxRowH : 0) +
           (event.isNotEmpty ? gap + eventH : 0);
-      // 下方剩餘高度：LINE 與停車共用（各自上方間距 8，底部留 8），任一方沒有內容時另一方補滿
-      //   LINE 有訊息 + 停車開啟：LINE 佔 40%（至少四行），停車拿其餘（至少 parkingMinH，不夠時只留 LINE）
-      //   LINE 有訊息、停車關閉：LINE 全拿
-      //   LINE 沒有訊息（或沒開）：停車面板全拿；開了 LINE 但停車關閉時不顯示停車面板
+      // 下方剩餘高度：LINE 與停車共用（各自上方間距 8，底部留 8），分配規則見 splitRest
       final rest = math.max(0.0, box.maxHeight - used - 16);
-      final parkingOn = ParkingConfig.instance.enabled;
-      final showLine = lineEnabled && LineNotifications.instance.messages.isNotEmpty;
-      var lineH = 0.0, parkingH = lineEnabled && !parkingOn ? 0.0 : rest;
-      if (showLine) {
-        if (parkingOn) {
-          lineH = math.max(lineTargetH, rest * lineShare);
-          parkingH = rest - lineH - 8;
-          if (parkingH < parkingMinH) {
-            lineH = rest;
-            parkingH = 0;
-          }
-        } else {
-          lineH = rest;
-          parkingH = 0;
-        }
-        if (lineH < lineMinH) lineH = 0;
-      }
+      final (lineH, parkingH) = splitRest(rest,
+          lineEnabled: lineEnabled,
+          hasMessages: lineEnabled && LineNotifications.instance.messages.isNotEmpty,
+          parkingOn: ParkingConfig.instance.enabled,
+          parkingActive: ParkingPanel.active.value);
       final column = Padding(
         padding: const EdgeInsets.fromLTRB(pad, topPad, pad, 0),
         child: Column(
@@ -172,7 +182,7 @@ class PortraitPanel extends StatelessWidget {
               ),
             ],
             // 停車面板加 key：LINE 區出現 / 消失時保留查詢結果與倒數狀態
-            if (parkingH >= parkingMinH) ...[
+            if (parkingH > 0) ...[
               const SizedBox(height: 8),
               SizedBox(
                 key: const ValueKey('parking'),

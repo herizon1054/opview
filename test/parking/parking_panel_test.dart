@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:opview/selfdrive/ui/onroad/portrait_panel.dart';
+import 'package:opview/selfdrive/ui/onroad/parking_panel.dart';
 import 'package:opview/selfdrive/ui/onroad/dashboard_hud.dart';
 import 'package:opview/selfdrive/ui/ui_state.dart';
 import 'package:opview/services/parking/parking_config.dart';
@@ -25,8 +26,8 @@ void main() {
     (160.0, true, false, true, false, false), // 卡片以 LINE 兩行預留計算後，停車放不下 100
     (500.0, true, false, true, true, false),
     (500.0, true, false, false, false, false), // 開 LINE、停車關閉 → 不顯示停車面板
-    (500.0, true, true, true, true, true), // 兩者共用：LINE 至少四行（或 40%）、停車其餘
-    (300.0, true, true, true, false, true), // 停車放不下 100 → LINE 補滿
+    (500.0, true, true, true, true, true), // 兩者共用：停車沒查詢 → 精簡版 90，LINE 拿其餘
+    (300.0, true, true, true, true, true), // 精簡版停車 90 + LINE 約 94（兩行以上）
     (500.0, true, true, false, false, true), // 停車關閉 → LINE 補滿
   ]) {
     testWidgets('portrait panel $height (LINE $line msg $msg, parking $parkingOn) fits and disposes timer', (
@@ -67,6 +68,39 @@ void main() {
       expect(tester.takeException(), isNull);
     });
   }
+
+  test('splitRest: idle parking shrinks to the compact bar; active parking leaves LINE two lines', () {
+    const idle = ParkingPanel.idleHeight, two = PortraitPanel.lineMinH;
+    (double, double) split(double rest, {bool line = true, bool msg = true, bool on = true, bool active = false}) =>
+        PortraitPanel.splitRest(rest, lineEnabled: line, hasMessages: msg, parkingOn: on, parkingActive: active);
+    // LINE 沒訊息：停車全拿（LINE 開著但停車關閉 → 都不顯示）
+    expect(split(300, msg: false), (0.0, 300.0));
+    expect(split(300, msg: false, on: false), (0.0, 0.0));
+    expect(split(300, line: false, msg: false), (0.0, 300.0));
+    // LINE 有訊息、停車關閉：LINE 全拿
+    expect(split(300, on: false), (300.0, 0.0));
+    // 沒查詢：停車精簡版，LINE 拿其餘
+    expect(split(300), (300 - idle - 8, idle));
+    // 精簡版放不下時只顯示 LINE
+    expect(split(idle + 8 + two - 1), (idle + 8 + two - 1, 0.0));
+    // 查詢中 / 有結果：LINE 只留兩行，停車拿其餘
+    expect(split(300, active: true), (two, 300 - two - 8));
+    // 停車放不下 100 時 LINE 讓出
+    expect(split(two + 8 + 99, active: true), (0.0, two + 8 + 99));
+  });
+
+  testWidgets('idle parking panel compact bar (90) fits without overflow', (tester) async {
+    ParkingConfig.instance.enabled = true;
+    await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(), home: Scaffold(body: Center(
+      child: SizedBox(width: 358, height: ParkingPanel.idleHeight,
+        child: ParkingPanel(state: UIState(), stale: true))))));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(find.textContaining('請先設定 TDX 金鑰'), findsWidgets);
+    expect(ParkingPanel.active.value, isFalse);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 16));
+  });
 
   testWidgets('EXP badge on the card in experimental mode; LINE gets four lines beside parking', (tester) async {
     ParkingConfig.instance.enabled = true;

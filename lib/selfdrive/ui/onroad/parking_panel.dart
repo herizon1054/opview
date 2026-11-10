@@ -18,6 +18,13 @@ class ParkingPanel extends StatefulWidget {
   final UIState state;
   final bool stale;
   const ParkingPanel({super.key, required this.state, required this.stale});
+
+  /// 停車面板是否「使用中」：查詢中或有查詢結果。直向資訊區依此分配 LINE / 停車高度
+  /// （沒使用時停車面板縮成 [idleHeight]，使用中 LINE 只留兩行）。
+  static final active = ValueNotifier<bool>(false);
+
+  /// 精簡版高度：內距 8 + 按鈕 48 + 間距 4 + 一行狀態（13 × 行高 1.43 ≈ 19）+ 內距 8 ≈ 87，留到 90
+  static const double idleHeight = 90;
   @override
   State<ParkingPanel> createState() => _ParkingPanelState();
 }
@@ -193,8 +200,29 @@ class _ParkingPanelState extends State<ParkingPanel>
     }
   }
 
+  /// 收起查詢結果：回到精簡版（直向資訊區的空間還給 LINE）
+  void _closeResult() {
+    setState(() {
+      _result = null;
+      _message = '按下按鈕後查詢';
+    });
+  }
+
+  // 查詢中或有結果 → 使用中；變化時在這一幀畫完後通知直向資訊區重新分配高度
+  void _syncActive() {
+    final on = _busy || _result != null;
+    if (ParkingPanel.active.value == on) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ParkingPanel.active.value = _busy || _result != null;
+    });
+  }
+
   @override
   void dispose() {
+    // 面板移除時一併結束「使用中」，LINE 才拿得回空間
+    if (ParkingPanel.active.value) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => ParkingPanel.active.value = false);
+    }
     _generation++;
     if (_busy) parkingApi.cancel();
     _timer?.cancel();
@@ -207,6 +235,7 @@ class _ParkingPanelState extends State<ParkingPanel>
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, box) {
+      _syncActive();
       final compact = box.maxHeight < 170;
       // Keep off-street locations; roadside rows need a positive vacancy count.
       // Match the display priority: cars first, then unclassified spaces.
@@ -274,6 +303,12 @@ class _ParkingPanelState extends State<ParkingPanel>
                       tooltip: '取消',
                       onPressed: _cancel,
                       icon: const Icon(Icons.close),
+                    )
+                  else if (_result != null)
+                    IconButton(
+                      tooltip: '收起結果',
+                      onPressed: _closeResult,
+                      icon: const Icon(Icons.expand_less),
                     ),
                 ],
               ),

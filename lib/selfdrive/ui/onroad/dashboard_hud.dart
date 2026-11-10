@@ -147,8 +147,12 @@ class DashboardCard extends StatelessWidget {
     return LayoutBuilder(builder: (context, constraints) {
       final boxH = constraints.maxHeight;
       final h = contentHeight ?? boxH;
-      // 中間欄上下間距：原本 0.09h + 0.07h；卡片比內容高度矮時縮小間距（文字約佔 0.62h），字級不變
-      final gaps = math.min(.16 * h, math.max(0.0, boxH - .63 * h));
+      // 中間欄上下間距：原本 0.09h + 0.07h；卡片比內容高度矮時縮小間距，字級不變。
+      // 文字高度：車速 0.42h（行高 1）＋ 單位 0.10h、TELEMETRY 0.065h × 實際行高
+      // （沒指定行高時沿用主題，Material 3 bodyMedium 為 1.43；之前以 1 倍估算，直向卡片溢出約 1 px）
+      final lineH = DefaultTextStyle.of(context).style.height ?? 1.25;
+      final textH = .42 * h + (.10 + .065) * h * lineH;
+      final gaps = math.min(.16 * h, math.max(0.0, boxH - textH - 1));
       return DecoratedBox(decoration: BoxDecoration(
         color: const Color(0xDC0D171C), borderRadius: BorderRadius.circular(math.min(h * .17, boxH * .5)),
         border: Border.all(color: const Color(0x335DE3D4))),

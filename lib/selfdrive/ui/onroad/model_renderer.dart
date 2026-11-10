@@ -38,10 +38,15 @@ const _leadClosingWarnKph = 20.0;
 // 系統紅色：同 alert_renderer 的 critical 警示底色（openpilot 0xC92231）
 const _leadClosingBg = Color(0xF1C92231);
 
-// 彩虹模式（儀表介面路徑）：近→遠的色相跨度與流動速度。色相隨時間遞減，近端由紅 → 紫 → 藍…循環
-const _rainbowSpanDeg = 200.0;
-const _rainbowDegPerSec = 60.0;
-const _rainbowStops = 13;
+// 彩虹模式（儀表介面路徑）：對照參考影片逐格取樣（66–74 秒，10 fps）校正：
+// - 色相隨「實際距離」線性變化（不是畫面高度）：近端大片同色、往遠處色帶越來越密；
+//   影片前車約 46 m，路徑近端 → 前車約 140°（紅 → 黃 → 綠），擬合約每公尺 3.4°
+// - 同一點色相每秒遞減約 50°（約 7 秒一輪，近端紅 → 紫 → 藍 → 綠 → 黃 → 紅）
+// - 純色（HSL 飽和 1、亮度 .5），透明度遠近一致約 50%（不往遠處淡出）
+const _rainbowDegPerMeter = 3.4;
+const _rainbowDegPerSec = 50.0;
+const _rainbowAlpha = .5;
+const _rainbowMaxStops = 24;
 
 // 前車鎖定框：以車身尺寸投影到畫面（距離越近框越大），超過原本上限（85 × 縮放）時改為「近距離樣式」
 const _leadHalfWidthM = 0.9; // 一般小客車寬約 1.8 m
@@ -123,7 +128,7 @@ class ModelRendererPainter extends CustomPainter {
     // draw everything
     _drawLaneLines(canvas, laneLinePolys);
     _drawRoadEdges(canvas, roadEdgePolys);
-    _drawPath(canvas, pathPoly);
+    _drawPath(canvas, pathPoly, maxDist);
     _drawLeadIndicators(canvas, pathX);
   }
 
@@ -148,12 +153,12 @@ class ModelRendererPainter extends CustomPainter {
   }
 
   /// draw path: gradient from bottom to top
-  void _drawPath(Canvas canvas, List<Offset> pathPoly) {
+  void _drawPath(Canvas canvas, List<Offset> pathPoly, double maxDist) {
     if (pathPoly.isEmpty) return;
 
     if (state.modernOverlay) {
       if (state.rainbowPath) {
-        _drawRainbowPath(canvas, pathPoly);
+        _drawRainbowPath(canvas, pathPoly, maxDist);
       } else {
         _drawGradientPolygon(canvas, pathPoly, const [
           Color(0x882CD4C3), Color(0x552CD4C3), Color(0x102CD4C3),
@@ -177,19 +182,88 @@ class ModelRendererPainter extends CustomPainter {
     _drawGradientPolygon(canvas, pathPoly, colors, [0.0, 0.5, 1.0]);
   }
 
-  /// 彩虹模式：沿路徑（畫面由下往上）排列的彩虹色帶，隨時間流動。
+  /// 彩虹模式：沿路徑排列的彩虹色帶（色相依路徑點的實際距離），隨時間流動。
   /// 每次 modelV2 更新重畫（約 20 Hz），以牆鐘決定相位，不需要另外的動畫計時器。
-  void _drawRainbowPath(Canvas canvas, List<Offset> pathPoly) {
+  void _drawRainbowPath(Canvas canvas, List<Offset> pathPoly, double maxDist) {
+    if (pathPoly.length < 3) return;
     final t = DateTime.now().millisecondsSinceEpoch / 1000.0;
     final phase = (t * _rainbowDegPerSec) % 360.0;
+    Color colorAt(double d) => HSLColor.fromAHSL(
+        _rainbowAlpha, (d * _rainbowDegPerMeter - phase) % 360.0, 1.0, .5).toColor();
+
+    // 漸層範圍 = 多邊形上下界（同 _drawGradientPolygon）
+    var minY = double.infinity, maxY = double.negativeInfinity;
+    for (final p in pathPoly) {
+      if (p.dy < minY) minY = p.dy;
+      if (p.dy > maxY) maxY = p.dy;
+    }
+    final h = maxY - minY;
+    if (h < 1) return;
+
+    // 路徑中心線各點投影到畫面，以畫面 y 當漸層位置、距離決定色相（只取由下往上單調的點）
+    final pathX = state.pathX, pathY = state.pathY, pathZ = state.pathZ;
+    final n = min(pathX.length, min(pathY.length, pathZ.length));
+    final dist = <double>[], pos = <double>[];
+    var lastPos = -1.0;
+    for (var i = 0; i < n; i++) {
+      final x = pathX[i];
+      if (x < 0) continue;
+      final over = x > maxDist;
+      final d = over ? maxDist : x;
+      double y = pathY[i], z = pathZ[i];
+      if (over && i > 0 && x != pathX[i - 1]) {
+        final k = ((maxDist - pathX[i - 1]) / (x - pathX[i - 1])).clamp(0.0, 1.0);
+        y = pathY[i - 1] + k * (y - pathY[i - 1]);
+        z = pathZ[i - 1] + k * (z - pathZ[i - 1]);
+      }
+      final sy = _projectY(d, y, z + _pathOffsetZ);
+      if (sy != null) {
+        final f = ((maxY - sy) / h).clamp(0.0, 1.0);
+        if (f > lastPos + .002) {
+          dist.add(d);
+          pos.add(f);
+          lastPos = f;
+        }
+      }
+      if (over) break;
+    }
+    if (dist.isEmpty) {
+      _drawPolygon(canvas, pathPoly, colorAt(0));
+      return;
+    }
+
+    // 點太多時抽樣（保留最後一點），並補齊 0 / 1 兩端
     final colors = <Color>[], stops = <double>[];
-    for (var i = 0; i < _rainbowStops; i++) {
-      final f = i / (_rainbowStops - 1); // 0 = 近（畫面下方）、1 = 遠
-      final hue = (f * _rainbowSpanDeg - phase) % 360.0;
-      colors.add(HSLColor.fromAHSL(_lerp(.62, .30, f), hue, .95, .55).toColor());
-      stops.add(f);
+    final step = (dist.length / _rainbowMaxStops).ceil().clamp(1, dist.length);
+    if (pos.first > 0) {
+      colors.add(colorAt(dist.first));
+      stops.add(0);
+    }
+    for (var i = 0; i < dist.length; i += step) {
+      colors.add(colorAt(dist[i]));
+      stops.add(pos[i]);
+    }
+    if (stops.last < pos.last) {
+      colors.add(colorAt(dist.last));
+      stops.add(pos.last);
+    }
+    if (stops.last < 1) {
+      colors.add(colorAt(dist.last));
+      stops.add(1);
+    }
+    if (colors.length < 2) {
+      _drawPolygon(canvas, pathPoly, colors.first);
+      return;
     }
     _drawGradientPolygon(canvas, pathPoly, colors, stops);
+  }
+
+  /// 3D 點投影到畫面的 y（w 太小回傳 null）
+  double? _projectY(double x, double y, double z) {
+    final t = carSpaceTransform;
+    final w = t[2][0] * x + t[2][1] * y + t[2][2] * z;
+    if (w.abs() < 1e-6) return null;
+    return (t[1][0] * x + t[1][1] * y + t[1][2] * z) / w;
   }
 
   /// experimental mode: HSL acceleration gradient

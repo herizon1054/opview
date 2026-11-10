@@ -75,9 +75,11 @@ void main() {
   testWidgets('LINE tag keeps a gap below the HUD card', (tester) async {
     ParkingConfig.instance.enabled = false;
     addTearDown(() => ParkingConfig.instance.enabled = true);
+    addTearDown(LineNotifications.instance.clear); // 失敗時也清掉，不影響下一個測試
     LineNotifications.instance.add('小明', '到了嗎');
     LineNotifications.instance.add('小華', '快到了');
-    final state = createMockUIState()..isConnected = false;
+    // 模擬狀態預設是原版介面（modernOverlay = false）→ 沒有儀表卡片
+    final state = createMockUIState()..modernOverlay = true..isConnected = false;
     await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(), home: Scaffold(body: Align(
       alignment: Alignment.topCenter,
       child: SizedBox(width: 390, height: 400, child: PortraitPanel(state: state, lineEnabled: true))))));
@@ -97,6 +99,7 @@ void main() {
     ParkingConfig.instance.enabled = false;
     addTearDown(() => ParkingConfig.instance.enabled = true);
     final n = LineNotifications.instance;
+    addTearDown(n.clear);
     final body = '一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十'; // 30 字 + 寄件者 2 字 = 兩行
     n.add('甲', '第一則$body');
     n.add('乙', '第二則$body');

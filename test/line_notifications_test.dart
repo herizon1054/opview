@@ -72,6 +72,25 @@ void main() {
     state.dispose();
   });
 
+  testWidgets('LINE tag keeps a gap below the HUD card', (tester) async {
+    ParkingConfig.instance.enabled = false;
+    addTearDown(() => ParkingConfig.instance.enabled = true);
+    LineNotifications.instance.add('小明', '到了嗎');
+    LineNotifications.instance.add('小華', '快到了');
+    final state = createMockUIState()..isConnected = false;
+    await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(), home: Scaffold(body: Align(
+      alignment: Alignment.topCenter,
+      child: SizedBox(width: 390, height: 400, child: PortraitPanel(state: state, lineEnabled: true))))));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    final card = tester.getRect(find.byType(DashboardCard));
+    final tag = tester.getRect(find.text('LINE · 2 則'));
+    expect(tag.top - card.bottom, greaterThanOrEqualTo(5)); // 標籤與卡片之間留空隙（原本 0）
+    LineNotifications.instance.clear();
+    await tester.pumpWidget(const SizedBox());
+    state.dispose();
+  });
+
   testWidgets('message gaps cost pixels, not whole lines: three 2-line messages all fit', (tester) async {
     // 無卡片、停車關閉 → LINE 拿下方全部；高度剛好放得下 2 + 2 + 2 行與兩個 6 px 間距
     // （原本每個間距算成一整行，第三則會被截掉、底下空兩行）
@@ -87,7 +106,7 @@ void main() {
     final state = createMockUIState()..hideHudCard = true..isConnected = false;
     await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(), home: Scaffold(body: Align(
       alignment: Alignment.topCenter,
-      child: SizedBox(width: 390, height: PortraitPanel.topPad + 8 + boxH + 8 + 1,
+      child: SizedBox(width: 390, height: PortraitPanel.topPad + 8 + PortraitPanel.lineTagSpace + boxH + 8 + 1,
         child: PortraitPanel(state: state, lineEnabled: true))))));
     await tester.pump();
     expect(tester.takeException(), isNull);

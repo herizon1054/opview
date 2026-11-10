@@ -40,7 +40,9 @@ class PortraitPanel extends StatelessWidget {
   // v21：LINE 區不再有標題列（「LINE · N 則」改為貼在上邊框的小標籤），上下內距 6
   static const double lineRowH = lineFont * lineHeight, linePadV = 6, lineChrome = 2 * linePadV + 2;
   // LINE 最小高度（兩行）：停車查詢使用中時 LINE 只留這麼多
-  static const double lineMinH = lineChrome + 2 * lineRowH;
+  // 「LINE · N 則」標籤往上凸出 8 px：LINE 欄上方多留 lineTagSpace，標籤不會頂到上方的卡片 / TDX 列
+  static const double lineTagSpace = 6;
+  static const double lineMinH = lineTagSpace + lineChrome + 2 * lineRowH;
   static const lineGreen = Color(0xFF06C755);
   // 停車面板（完整版）最小高度；沒查詢時改用精簡版 ParkingPanel.idleHeight
   static const double parkingMinH = 100;
@@ -178,7 +180,8 @@ class PortraitPanel extends StatelessWidget {
               SizedBox(
                 key: const ValueKey('line'),
                 height: lineH,
-                child: IgnorePointer(child: _lineBox(LineNotifications.instance.messages)),
+                child: Padding(padding: const EdgeInsets.only(top: lineTagSpace),
+                  child: IgnorePointer(child: _lineBox(LineNotifications.instance.messages))),
               ),
             ],
             // 停車面板加 key：LINE 區出現 / 消失時保留查詢結果與倒數狀態

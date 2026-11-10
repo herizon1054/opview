@@ -46,6 +46,7 @@ class UIState extends ChangeNotifier {
 
   // Phone-only presentation state. Never sent back to comma.
   bool modernOverlay = true;
+  bool rainbowPath = false; // 彩虹模式（顯示設定；只影響儀表介面的路徑）
   DateTime? lastModelAt;
   DateTime? lastRadarAt;
   /// 最新一筆資料比「最順時」多晚到（ms，由 ConnectionManager 依 logMonoTime 計算）。

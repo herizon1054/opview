@@ -38,6 +38,17 @@ const _leadClosingWarnKph = 20.0;
 // 系統紅色：同 alert_renderer 的 critical 警示底色（openpilot 0xC92231）
 const _leadClosingBg = Color(0xF1C92231);
 
+// 彩虹模式（儀表介面路徑）：近→遠的色相跨度與流動速度。色相隨時間遞減，近端由紅 → 紫 → 藍…循環
+const _rainbowSpanDeg = 200.0;
+const _rainbowDegPerSec = 60.0;
+const _rainbowStops = 13;
+
+// 前車鎖定框：以車身尺寸投影到畫面（距離越近框越大），超過原本上限（85 × 縮放）時改為「近距離樣式」
+const _leadHalfWidthM = 0.9; // 一般小客車寬約 1.8 m
+const _leadHeightM = 1.5;
+const _leadBoxMaxW = 85.0; // 原本鎖定框寬度上限（遠距離樣式不變）
+const _leadNearMaxFrac = .7; // 近距離框最寬為畫面寬的 70%
+
 // -- data classes --
 
 class LeadVehicle {
@@ -141,9 +152,13 @@ class ModelRendererPainter extends CustomPainter {
     if (pathPoly.isEmpty) return;
 
     if (state.modernOverlay) {
-      _drawGradientPolygon(canvas, pathPoly, const [
-        Color(0x882CD4C3), Color(0x552CD4C3), Color(0x102CD4C3),
-      ], [0.0, 0.6, 1.0]);
+      if (state.rainbowPath) {
+        _drawRainbowPath(canvas, pathPoly);
+      } else {
+        _drawGradientPolygon(canvas, pathPoly, const [
+          Color(0x882CD4C3), Color(0x552CD4C3), Color(0x102CD4C3),
+        ], [0.0, 0.6, 1.0]);
+      }
       final outline = Path()..addPolygon(pathPoly, true);
       canvas.drawPath(outline, Paint()..color = const Color(0xAA61E3D4)
         ..style = PaintingStyle.stroke..strokeWidth = 2);
@@ -160,6 +175,21 @@ class ModelRendererPainter extends CustomPainter {
         Color.lerp(noThrottleColors[i], throttleColors[i], blend)!,
     ];
     _drawGradientPolygon(canvas, pathPoly, colors, [0.0, 0.5, 1.0]);
+  }
+
+  /// 彩虹模式：沿路徑（畫面由下往上）排列的彩虹色帶，隨時間流動。
+  /// 每次 modelV2 更新重畫（約 20 Hz），以牆鐘決定相位，不需要另外的動畫計時器。
+  void _drawRainbowPath(Canvas canvas, List<Offset> pathPoly) {
+    final t = DateTime.now().millisecondsSinceEpoch / 1000.0;
+    final phase = (t * _rainbowDegPerSec) % 360.0;
+    final colors = <Color>[], stops = <double>[];
+    for (var i = 0; i < _rainbowStops; i++) {
+      final f = i / (_rainbowStops - 1); // 0 = 近（畫面下方）、1 = 遠
+      final hue = (f * _rainbowSpanDeg - phase) % 360.0;
+      colors.add(HSLColor.fromAHSL(_lerp(.62, .30, f), hue, .95, .55).toColor());
+      stops.add(f);
+    }
+    _drawGradientPolygon(canvas, pathPoly, colors, stops);
   }
 
   /// experimental mode: HSL acceleration gradient
@@ -227,7 +257,16 @@ class ModelRendererPainter extends CustomPainter {
           // 前車速度：radarState LeadData.vLead（m/s，絕對速度）；沒有時以 vEgo + vRel 推算
           final vLeadRaw = (lead['vLead'] as num?)?.toDouble();
           final vLead = (vLeadRaw != null && vLeadRaw.isFinite) ? vLeadRaw : state.vEgo + vRel;
-          _drawLeadBox(canvas, point, dRel, vLead);
+          // 車身在畫面上的範圍：左右各 0.9 m、高 1.5 m（地面 → 車頂），用來決定近距離時的框大小
+          Rect? body;
+          final groundZ = z + _pathOffsetZ;
+          final l = _mapToScreen(dRel, -yRel - _leadHalfWidthM, groundZ);
+          final r = _mapToScreen(dRel, -yRel + _leadHalfWidthM, groundZ);
+          final top = _mapToScreen(dRel, -yRel, groundZ - _leadHeightM);
+          if (l != null && r != null && top != null && top.dy < point.dy) {
+            body = Rect.fromLTRB(min(l.dx, r.dx), top.dy, max(l.dx, r.dx), point.dy);
+          }
+          _drawLeadBox(canvas, point, dRel, vLead, body);
           oneD = dRel;
           oneY = yRel;
         } else {
@@ -243,11 +282,33 @@ class ModelRendererPainter extends CustomPainter {
   }
 
   // A projected radar marker, not an image-detection bounding box.
-  void _drawLeadBox(Canvas canvas, Offset point, double distance, double vLead) {
+  //
+  // 遠距離（車身投影寬度 ≤ 85 × 縮放）：四角括號 + 十字線，標籤在框下方；框寬改為跟著車身投影變大。
+  // 近距離（車身投影更寬）：框住整台車的方框（細邊框 + 半透明底），標籤移到框內約車牌高度；
+  //   框寬上限為畫面寬 70%，超出畫面的部分裁掉。
+  void _drawLeadBox(Canvas canvas, Offset point, double distance, double vLead, [Rect? body]) {
     // 依短邊縮放：橫向 = 高（與原本相同），直向 = 寬，兩種方向外觀一致
     final scale = (min(contentRect.width, contentRect.height) / 600).clamp(0.6, 2.0);
-    final width = (1500 / distance).clamp(28.0, 85.0) * scale;
-    final rect = Rect.fromLTWH(point.dx - width / 2, point.dy - width, width, width * .7);
+    final unit = state.isMetric ? 'km' : 'mph';
+    final conv = state.isMetric ? msToKph : msToMph;
+    final speed = vLead.isFinite ? (max(0.0, vLead) * conv).round().toString() : '—';
+    final label = '${distance.round()} m · $speed $unit';
+    final closing = vLead.isFinite && state.vEgo.isFinite &&
+        (state.vEgo - vLead) * msToKph > _leadClosingWarnKph;
+
+    if (body != null && body.width > _leadBoxMaxW * scale && body.height > 0) {
+      _drawLeadBoxNear(canvas, body, label, closing, scale);
+      return;
+    }
+
+    // 括號框寬度：取「原本依距離的寬度」與「車身投影寬度」較大者，上限 85 × 縮放；
+    // 接近上限時框的底部逐漸貼齊前車底部，切換成近距離方框時不會跳動
+    final maxW = _leadBoxMaxW * scale;
+    final legacyW = (1500 / distance).clamp(28.0, _leadBoxMaxW) * scale;
+    final width = body == null ? legacyW : max(legacyW, min(body.width, maxW));
+    final t = ((width / maxW - .6) / .4).clamp(0.0, 1.0);
+    final rect = Rect.fromLTWH(point.dx - width / 2, point.dy - width * .3 * (1 - t) - width * .7,
+        width, width * .7);
     final paint = Paint()..color = const Color(0xFF61E3D4)
       ..style = PaintingStyle.stroke..strokeWidth = 2 * scale;
     final arm = width * .23;
@@ -268,27 +329,58 @@ class ModelRendererPainter extends CustomPainter {
     canvas.drawLine(Offset(c.dx, c.dy + gapC), Offset(c.dx, rect.bottom - rect.height * .14), cross);
     // 鎖定框下方：距離（固定公尺）· 前車速度（km 或 mph，不顯示 /h）。車距時間仍在右側儀表卡片。
     // 本車比前車快超過 20 km/h：底色改為系統紅色（與 critical 警示同色 0xC92231）。
-    final unit = state.isMetric ? 'km' : 'mph';
-    final conv = state.isMetric ? msToKph : msToMph;
-    final speed = vLead.isFinite ? (max(0.0, vLead) * conv).round().toString() : '—';
-    final label = '${distance.round()} m · $speed $unit';
-    final closing = vLead.isFinite && state.vEgo.isFinite &&
-        (state.vEgo - vLead) * msToKph > _leadClosingWarnKph;
+    // 一律放框下方；只有超出畫面底部時往上收，避免被切掉
+    _drawLeadLabel(canvas, label, closing, scale, centerX: point.dx, top: rect.bottom + 8 * scale);
+  }
+
+  /// 近距離鎖定框：框住整台車，細邊框 + 半透明底 + 四角加粗；標籤在框內約車牌高度
+  void _drawLeadBoxNear(Canvas canvas, Rect body, String label, bool closing, double scale) {
+    var rect = body;
+    final maxW = contentRect.width * _leadNearMaxFrac;
+    if (rect.width > maxW) {
+      // 以底部中心為基準等比縮小（框仍貼著前車底部）
+      final k = maxW / rect.width;
+      rect = Rect.fromLTRB(rect.center.dx - maxW / 2, rect.bottom - rect.height * k,
+          rect.center.dx + maxW / 2, rect.bottom);
+    }
+    rect = rect.intersect(contentRect.deflate(2));
+    if (rect.width <= 0 || rect.height <= 0) return;
+    const c = Color(0xFF61E3D4);
+    canvas.drawRect(rect, Paint()..color = const Color(0x2261E3D4));
+    canvas.drawRect(rect, Paint()..color = c.withAlpha(220)
+      ..style = PaintingStyle.stroke..strokeWidth = 1.6 * scale);
+    // 四角加粗短邊，與遠距離的括號樣式呼應
+    final arm = min(rect.width, rect.height) * .12;
+    final corner = Paint()..color = c..style = PaintingStyle.stroke
+      ..strokeWidth = 3.2 * scale..strokeCap = StrokeCap.square;
+    for (final p in [rect.topLeft, rect.topRight, rect.bottomLeft, rect.bottomRight]) {
+      final dx = p.dx == rect.left ? arm : -arm;
+      final dy = p.dy == rect.top ? arm : -arm;
+      canvas.drawPath(Path()..moveTo(p.dx + dx, p.dy)..lineTo(p.dx, p.dy)..lineTo(p.dx, p.dy + dy), corner);
+    }
+    // 標籤字級隨框放大（最多 1.6 倍），放在框內 70% 高度（約車牌位置）
+    final grow = (rect.width / (_leadBoxMaxW * scale)).clamp(1.0, 1.6);
+    _drawLeadLabel(canvas, label, closing, scale * grow,
+        centerX: rect.center.dx, top: rect.top + rect.height * .70);
+  }
+
+  /// 鎖定框標籤（距離 · 前車速度）；超出畫面時往內收
+  void _drawLeadLabel(Canvas canvas, String label, bool closing, double scale,
+      {required double centerX, required double top}) {
     final text = TextPainter(text: TextSpan(text: label,
       style: TextStyle(color: Colors.white, fontSize: 12 * scale, fontWeight: FontWeight.w600)),
       textDirection: TextDirection.ltr)..layout();
-    final gap = 8 * scale;
-    // 一律放框下方；只有超出畫面底部時往上收，避免被切掉
-    final oy = min(rect.bottom + gap, contentRect.bottom - text.height - 4 * scale);
+    final oy = min(top, contentRect.bottom - text.height - 4 * scale);
     final minX = contentRect.left + 10 * scale;
     final maxX = max(minX, contentRect.right - text.width - 10 * scale);
-    final ox = min(max(point.dx - text.width / 2, minX), maxX);
+    final ox = min(max(centerX - text.width / 2, minX), maxX);
     final origin = Offset(ox, oy);
     canvas.drawRRect(RRect.fromRectAndRadius(
       Rect.fromLTWH(origin.dx - 7 * scale, origin.dy - 4 * scale,
         text.width + 14 * scale, text.height + 8 * scale), Radius.circular(10 * scale)),
       Paint()..color = closing ? _leadClosingBg : const Color(0xDD10191D));
     text.paint(canvas, origin);
+    text.dispose();
   }
 
   /// leadTwo：目標點（車輛底部）下方的紅色向上箭頭，大小依距離縮放（同鎖定框的縮放規則）

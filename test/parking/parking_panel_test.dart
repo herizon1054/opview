@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:opview/selfdrive/ui/onroad/portrait_panel.dart';
 import 'package:opview/selfdrive/ui/ui_state.dart';
+import 'package:opview/services/parking/parking_config.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -13,10 +14,16 @@ void main() {
           (call) async => null,
         );
   });
-  for (final height in [160.0, 300.0, 500.0]) {
-    testWidgets('portrait panel fits height $height and disposes timer', (
+  // (高度, LINE, 停車查詢開啟, 是否應顯示停車面板)
+  for (final (height, line, parkingOn, showParking) in [
+    (160.0, false, true, false), (300.0, false, true, true), (500.0, false, true, true),
+    (160.0, true, true, false), (500.0, true, true, true), (500.0, true, false, false),
+  ]) {
+    testWidgets('portrait panel fits height $height (LINE $line, parking $parkingOn) and disposes timer', (
       tester,
     ) async {
+      ParkingConfig.instance.enabled = parkingOn;
+      addTearDown(() => ParkingConfig.instance.enabled = true);
       await tester.pumpWidget(
         MaterialApp(
           theme: ThemeData.dark(),
@@ -28,7 +35,7 @@ void main() {
                 child: PortraitPanel(
                   state: UIState(),
                   stale: true,
-                  lineEnabled: true,
+                  lineEnabled: line,
                 ),
               ),
             ),
@@ -37,9 +44,8 @@ void main() {
       );
       await tester.pump();
       expect(tester.takeException(), isNull);
-      if (height >= 300) {
-        expect(find.textContaining('請先設定 TDX 金鑰'), findsWidgets);
-      }
+      // LINE + 停車：LINE 佔剩餘 40%、停車拿其餘；只開 LINE（停車關閉）時剩餘高度全給 LINE
+      expect(find.textContaining('請先設定 TDX 金鑰'), showParking ? findsWidgets : findsNothing);
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(seconds: 16));
       expect(tester.takeException(), isNull);

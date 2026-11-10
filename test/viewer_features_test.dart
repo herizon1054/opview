@@ -49,6 +49,7 @@ void main() {
     settings.setPip(true);
     settings.setBrightness(.3);
     settings.setHudEvery(1);
+    settings.setRainbowPath(true);
     await Future<void>.delayed(Duration.zero);
     final restored = ViewerSettings();
     await restored.load();
@@ -57,6 +58,7 @@ void main() {
     expect(restored.pictureInPicture, false); // v23：PiP 功能取消，load() 一律關閉
     expect(restored.brightness, .3);
     expect(restored.hudEvery, 1);
+    expect(restored.rainbowPath, true);
     restored.setBrightness(null);
     await Future<void>.delayed(Duration.zero);
     expect(calls.last.method, 'setBrightness');

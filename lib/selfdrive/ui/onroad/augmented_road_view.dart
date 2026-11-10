@@ -20,6 +20,7 @@ import 'blindspot_glow.dart';
 import 'vehicle_details.dart';
 import '../settings/viewer_settings_dialog.dart';
 import 'package:opview/services/viewer_settings.dart';
+import 'package:opview/services/parking/parking_config.dart';
 import 'package:opview/services/viewer_system.dart' as system;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -546,8 +547,10 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                 widget.uiState.alertSize, widget.uiState.alertText1, widget.uiState.leadDistance != null,
                 widget.uiState.tdxNextSpeedDisplay, widget.uiState.tdxCongestion,
                 widget.uiState.tdxEventText, widget.uiState.gearShifter,
-                widget.uiState.leftBlinker, widget.uiState.rightBlinker),
-              builder: () => PortraitPanel(state: widget.uiState, stale: _stale),
+                widget.uiState.leftBlinker, widget.uiState.rightBlinker,
+                widget.settings?.lineNotify ?? false, ParkingConfig.instance.enabled),
+              builder: () => PortraitPanel(state: widget.uiState, stale: _stale,
+                  lineEnabled: widget.settings?.lineNotify ?? false),
             ),
           ),
         )),

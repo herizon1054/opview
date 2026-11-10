@@ -18,6 +18,8 @@ class ViewerSettings extends ChangeNotifier {
   bool standstillTimer = false;
   AlertSoundMode alertSound = AlertSoundMode.mute; // 預設靜音
   bool backgroundRun = true; // 背景執行：離開 App 時保留起步語音（見 app.dart _wantBackground）
+  bool lineNotify = false; // 直向下方顯示 LINE 通知（需通知存取權）
+  bool rainbowPath = false; // 彩虹模式：儀表介面的行駛路徑改為流動彩虹色
   double? brightness;
   int hudEvery = 4; // HUD ~5 Hz when modelV2 is 20 Hz; path and alerts unchanged.
   SharedPreferences? _prefs;
@@ -41,6 +43,8 @@ class ViewerSettings extends ChangeNotifier {
     final snd = prefs.getString('viewer_alert_sound');
     alertSound = AlertSoundMode.values.firstWhere((e) => e.name == snd, orElse: () => AlertSoundMode.mute);
     backgroundRun = prefs.getBool('viewer_background_run') ?? true;
+    lineNotify = prefs.getBool('viewer_line_notify') ?? false;
+    rainbowPath = prefs.getBool('viewer_rainbow_path') ?? false;
     final b = prefs.getDouble('viewer_brightness');
     brightness = b != null && b.isFinite && b >= 0 ? b.clamp(.05, 1.0).toDouble() : null;
     hudEvery = prefs.getInt('viewer_hud_every') == 1 ? 1 : 4;
@@ -61,6 +65,12 @@ class ViewerSettings extends ChangeNotifier {
   }
   void setAutoEnterOpview(bool value) {
     autoEnterOpview = value; _prefs?.setBool('viewer_auto_enter_opview', value); notifyListeners();
+  }
+  void setRainbowPath(bool value) {
+    rainbowPath = value; _prefs?.setBool('viewer_rainbow_path', value); notifyListeners();
+  }
+  void setLineNotify(bool value) {
+    lineNotify = value; _prefs?.setBool('viewer_line_notify', value); notifyListeners();
   }
   void setLeadDepartAlert(bool value) {
     leadDepartAlert = value; _prefs?.setBool('viewer_lead_depart_alert', value); notifyListeners();

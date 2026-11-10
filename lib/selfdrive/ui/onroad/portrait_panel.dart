@@ -3,7 +3,9 @@
 //   ┌ 徽章（ENGAGED / EXPERIMENTAL）……………… opview ┐
 //   │ ◀ 儀表卡片：MAX ｜ 車速 ｜ 前車距離 / 車頭時距 ▶  │  ← 兩側為方向燈箭頭
 //   │ TDX 列：前方車速（依壅塞分級上色）＋ 路況分級     │  ← 有 TDX 資料才顯示
-//   │ TDX 事件（施工、事故…，過長自動捲動）            │  ← 有事件才顯示
+//   │ TDX 事件（施工、事故…，過長自動捲動）            │  ← 有事件才顯示（優先於 LINE）
+//   │ LINE 通知（每則 30 秒，至少兩行）                 │  ← 顯示設定開啟「顯示 LINE 通知」才有
+//   │ 附近停車場與空位（按鈕與結果）                    │  ← 停車查詢開啟時與 LINE 分配剩餘高度
 //   └ （comma 事件 / alert 改顯示在道路畫面底部，見 AugmentedRoadView）┘
 //
 // 原版介面（modernOverlay = false）：原版 HUD 仍疊在影像上，本區只放 TDX 事件與警示。
@@ -16,12 +18,13 @@ import '../ui_state.dart';
 import 'dashboard_hud.dart';
 import 'tdx_marquee.dart';
 import 'parking_panel.dart';
+import 'package:opview/services/line_notifications.dart';
+import 'package:opview/services/parking/parking_config.dart';
 
 class PortraitPanel extends StatelessWidget {
   final UIState state;
   final bool stale;
-  // Compatibility with older hosts passing the LINE notification flag.
-  // This noline-based panel does not implement LINE notifications.
+  /// 顯示設定「顯示 LINE 通知」
   final bool lineEnabled;
   const PortraitPanel({
     super.key,
@@ -30,8 +33,14 @@ class PortraitPanel extends StatelessWidget {
     this.lineEnabled = false,
   });
 
-  // v20：TDX 字級 ×1.3
+  // v20：TDX 與 LINE 字級 ×1.3
   static const double fontZoom = 1.3;
+  static const double lineFont = 14 * fontZoom, lineHeight = 1.3, lineMsgGap = 6;
+  // LINE 通知區最小高度：標題列 + 兩行訊息 + 上下內距
+  static const double lineMinH = 16 + 2 + 2 * lineFont * lineHeight + 16 + 2;
+  static const lineGreen = Color(0xFF06C755);
+  // 停車面板最小高度（低於此不顯示）；LINE 與停車同時開啟時 LINE 佔剩餘高度的比例
+  static const double parkingMinH = 100, lineShare = .4;
 
   static const double pad = 16, gap = 12;
   static const double badgeH = 26,
@@ -68,7 +77,10 @@ class PortraitPanel extends StatelessWidget {
           (modern ? badgeH + cardGap : 0) +
           (tdxSpeed != null ? tdxRowH + gap : 0) +
           (event.isNotEmpty ? eventH + gap : 0) +
-          8;
+          8 +
+          // LINE 通知區固定預留（不論有沒有訊息），卡片才不會因訊息出現 / 消失而跳動；
+          // 空間不足時優先縮卡片（下限 cardMinH），TDX / 事件不受影響
+          (lineEnabled ? lineMinH + gap : 0);
       final cardH = math.max(
         0.0,
         math.min(
@@ -85,7 +97,26 @@ class PortraitPanel extends StatelessWidget {
           (showCard ? cardGap + cardH : 0) +
           (tdxSpeed != null ? gap + tdxRowH : 0) +
           (event.isNotEmpty ? gap + eventH : 0);
-      final parkingH = math.max(0.0, box.maxHeight - used - 16);
+      // 下方剩餘高度分配給 LINE 與停車（各自上方間距 8，底部留 8）
+      //   只開 LINE：LINE 全拿
+      //   LINE + 停車：LINE 佔 40%（至少 lineMinH），停車拿其餘（至少 parkingMinH，不夠時只留 LINE）
+      //   只開停車 / 都沒開：同原本，停車面板全拿（停車關閉時面板仍顯示「請開啟」與設定入口）
+      final rest = math.max(0.0, box.maxHeight - used - 16);
+      var lineH = 0.0, parkingH = rest;
+      if (lineEnabled) {
+        if (!ParkingConfig.instance.enabled) {
+          lineH = rest;
+          parkingH = 0;
+        } else {
+          lineH = math.max(lineMinH, rest * lineShare);
+          parkingH = rest - lineH - 8;
+          if (parkingH < parkingMinH) {
+            lineH = rest;
+            parkingH = 0;
+          }
+        }
+        if (lineH < lineMinH) lineH = 0;
+      }
       final column = Padding(
         padding: const EdgeInsets.fromLTRB(pad, topPad, pad, 0),
         child: Column(
@@ -139,7 +170,20 @@ class PortraitPanel extends StatelessWidget {
                 ),
               ),
             ],
-            if (parkingH >= 100) ...[
+            if (lineH > 0) ...[
+              const SizedBox(height: 8),
+              // LINE：訊息變化時只重畫這一塊（不等儀表節流）；純顯示，不攔截觸控
+              SizedBox(
+                height: lineH,
+                child: IgnorePointer(
+                  child: ListenableBuilder(
+                    listenable: LineNotifications.instance,
+                    builder: (context, _) => _lineBox(LineNotifications.instance.messages),
+                  ),
+                ),
+              ),
+            ],
+            if (parkingH >= parkingMinH) ...[
               const SizedBox(height: 8),
               SizedBox(
                 height: parkingH,
@@ -197,6 +241,59 @@ class PortraitPanel extends StatelessWidget {
       ],
     );
   }
+
+  /// LINE 通知：新的在上，每則 30 秒後自動消失。
+  /// 行數依剩餘高度自動決定：最新一則優先，能完整顯示就完整顯示，放不下才截斷（至少兩行）；
+  /// 較舊的訊息用剩下的行數，連一行都放不下就不顯示。
+  Widget _lineBox(List<LineMessage> msgs) {
+    if (msgs.isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+      decoration: BoxDecoration(color: const Color(0xFF0D151B), borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: lineGreen.withAlpha(90))),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          const Text('LINE', style: TextStyle(fontSize: 11 * fontZoom, color: lineGreen, fontWeight: FontWeight.w800,
+              letterSpacing: 1, height: 1.2)),
+          const Spacer(),
+          if (msgs.length > 1)
+            Text('${msgs.length} 則', style: const TextStyle(fontSize: 11 * fontZoom, color: Colors.white38, height: 1.2)),
+        ]),
+        const SizedBox(height: 2),
+        Expanded(child: LayoutBuilder(builder: (context, box) {
+          final scaler = MediaQuery.textScalerOf(context);
+          final lineH = scaler.scale(lineFont) * lineHeight;
+          var remaining = (box.maxHeight / lineH).floor();
+          final children = <Widget>[];
+          for (var i = 0; i < msgs.length && remaining > 0; i++) {
+            final span = _lineSpan(msgs[i]);
+            final style = TextStyle(fontSize: lineFont, height: lineHeight,
+                color: i == 0 ? Colors.white : Colors.white60);
+            final tp = TextPainter(text: TextSpan(style: style, children: [span]),
+                textDirection: TextDirection.ltr, textScaler: scaler)..layout(maxWidth: box.maxWidth);
+            final need = tp.computeLineMetrics().length;
+            tp.dispose();
+            // 最新一則至少兩行（版面保證至少有兩行空間）；其餘用剩下的
+            final lines = math.min(need, remaining);
+            if (lines <= 0) break;
+            children.add(Padding(padding: EdgeInsets.only(top: i == 0 ? 0 : lineMsgGap),
+              child: Text.rich(span, maxLines: lines, overflow: TextOverflow.ellipsis, style: style)));
+            remaining -= lines;
+            // 訊息間距約佔 lineMsgGap / lineH 行
+            remaining -= (lineMsgGap / lineH).ceil();
+          }
+          return ClipRect(child: SingleChildScrollView(physics: const NeverScrollableScrollPhysics(),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children)));
+        })),
+      ]),
+    );
+  }
+
+  TextSpan _lineSpan(LineMessage m) => TextSpan(children: [
+    if (m.sender.isNotEmpty)
+      TextSpan(text: '${m.sender}：', style: const TextStyle(color: lineGreen, fontWeight: FontWeight.w700)),
+    TextSpan(text: m.text),
+  ]);
 
   Widget _tdxRow(int speed) {
     final c = tdxCongestionColor(state.tdxCongestion);

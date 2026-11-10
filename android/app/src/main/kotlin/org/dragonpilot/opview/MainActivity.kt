@@ -19,6 +19,7 @@ import android.view.WindowManager
 import androidx.annotation.RequiresApi
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 
 class MainActivity: FlutterActivity() {
@@ -713,6 +714,13 @@ class MainActivity: FlutterActivity() {
         }
     }
 
+    private fun hasNotificationAccess(): Boolean {
+        val enabled = android.provider.Settings.Secure.getString(
+            contentResolver, "enabled_notification_listeners") ?: ""
+        return enabled.split(":").any {
+            android.content.ComponentName.unflattenFromString(it)?.packageName == packageName }
+    }
+
     private fun exitReasonName(r: Int): String = when (r) {
         1 -> "EXIT_SELF"; 2 -> "SIGNALED"; 3 -> "LOW_MEMORY"; 4 -> "CRASH(Java)"; 5 -> "CRASH_NATIVE"
         6 -> "ANR"; 7 -> "INITIALIZATION_FAILURE"; 8 -> "PERMISSION_CHANGE"; 9 -> "EXCESSIVE_RESOURCE_USAGE"
@@ -842,6 +850,17 @@ class MainActivity: FlutterActivity() {
             }
         }
 
+        // LINE 通知（OpviewNotificationListener → Dart）
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger, "org.dragonpilot.opview/line")
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+                    OpviewNotificationListener.sink = { m -> events?.success(m) }
+                }
+                override fun onCancel(arguments: Any?) {
+                    OpviewNotificationListener.sink = null
+                }
+            })
+
         val system = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, SYSTEM_CHANNEL)
         systemChannel = system
         system.setMethodCallHandler { call, result ->
@@ -881,6 +900,48 @@ class MainActivity: FlutterActivity() {
                             result.success(true)
                         } catch (e: Exception) { result.success(false) }
                     }
+                }
+                // 是否已授權「通知存取權」（讀取 LINE 通知）
+                "notificationAccess" -> result.success(hasNotificationAccess())
+                // LINE 通知診斷：授權、服務綁定、LINE 是否安裝、收到 / 略過的數量（不含內容）
+                "lineDiag" -> {
+                    val m = HashMap<String, Any?>(OpviewNotificationListener.diag())
+                    m["access"] = hasNotificationAccess()
+                    m["lineInstalled"] = try {
+                        packageManager.getPackageInfo(OpviewNotificationListener.LINE_PACKAGE, 0); true
+                    } catch (e: Exception) { false }
+                    result.success(m)
+                }
+                // 已授權但系統沒有綁定服務（例如被省電機制停掉）：要求系統重新綁定
+                // 小米 HyperOS：從最近工作上滑清除（SwipeUpClean）後，系統不再綁定通知服務，
+                // 單純 requestRebind 無效（log 實測）。先把服務元件停用再啟用，讓系統重新掃描並綁定，再 requestRebind。
+                "lineRebind" -> {
+                    if (!hasNotificationAccess()) { result.success("未授權"); return@setMethodCallHandler }
+                    val cn = android.content.ComponentName(this, OpviewNotificationListener::class.java)
+                    val steps = ArrayList<String>()
+                    try {
+                        packageManager.setComponentEnabledSetting(cn,
+                            PackageManager.COMPONENT_ENABLED_STATE_DISABLED, PackageManager.DONT_KILL_APP)
+                        packageManager.setComponentEnabledSetting(cn,
+                            PackageManager.COMPONENT_ENABLED_STATE_ENABLED, PackageManager.DONT_KILL_APP)
+                        steps.add("元件重新啟用")
+                    } catch (e: Exception) { steps.add("元件重新啟用失敗：${e.message}") }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                        try {
+                            android.service.notification.NotificationListenerService.requestRebind(cn)
+                            steps.add("requestRebind")
+                        } catch (e: Exception) { steps.add("requestRebind 失敗：${e.message}") }
+                    }
+                    result.success(steps.joinToString(" + "))
+                }
+                // 開啟系統「通知存取權」設定頁
+                "openNotificationAccess" -> {
+                    try {
+                        val i = Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+                        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        startActivity(i)
+                        result.success(true)
+                    } catch (e: Exception) { result.success(false) }
                 }
                 // 前車起步 / 綠燈起步提醒聲音：{mode: voice|beep, text}
                 "setBackgroundKeepAlive" -> {

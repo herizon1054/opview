@@ -16,6 +16,7 @@ import 'package:opview/services/connection_manager.dart';
 import 'package:opview/services/viewer_settings.dart';
 import 'package:opview/services/stop_go_alerts.dart';
 import 'package:opview/services/tdx/tdx_traffic_service.dart';
+import 'package:opview/services/line_notifications.dart';
 import 'package:opview/services/alert_sound.dart';
 import 'package:opview/services/viewer_system.dart' as system;
 import 'package:opview/selfdrive/ui/settings/op_settings_link.dart'
@@ -59,7 +60,9 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     _uiState.isMetric = _settings.metric;
     _uiState.tdxEnabled = _settings.tdx;
     _syncTdx();
+    LineNotifications.instance.setEnabled(_settings.lineNotify);
     _uiState.modernOverlay = _settings.layout != ViewerLayout.classic;
+    _uiState.rainbowPath = _settings.rainbowPath;
     StopGoAlerts.instance.configure(greenLight: _settings.greenLightAlert,
         leadDepart: _settings.leadDepartAlert, standstillTimer: _settings.standstillTimer);
     _syncBackgroundWish();

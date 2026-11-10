@@ -28,8 +28,9 @@ opview 在手機上即時顯示 [openpilot](https://github.com/commaai/openpilot
 |---|---|
 | `opview-uber` | 含 LINE 通知讀取 |
 | `opview-stopcar` | 含附近停車場與空位查詢，不含 LINE 通知讀取 |
+| `opview-tdx` | 含附近停車場與空位查詢、手機內建 TDX 路況、LINE 通知讀取 |
 
-**本分支：`opview-stopcar`**，含附近停車場與空位查詢，不含 LINE 通知讀取。兩個分支的其他功能相同。
+**本分支：`opview-tdx`**，含附近停車場與空位查詢、手機內建 TDX 路況（不再讀 comma 的 tdx）、LINE 通知讀取。
 
 ## 功能介紹
 
@@ -59,15 +60,19 @@ opview 在手機上即時顯示 [openpilot](https://github.com/commaai/openpilot
   - 原版介面（openpilot 原廠 HUD）
   - 儀表＋車輛資訊
 - **直向**：
-  - 上方是道路畫面，中間是儀表卡片，下方依序是 前方車速 → TDX 路況跑馬燈 → 附近停車場（開啟停車功能時）。
+  - 上方是道路畫面，中間是儀表卡片，下方依序是 前方車速 → TDX 路況跑馬燈 → LINE 通知（開啟時） → 附近停車場（開啟停車功能時）。
   - 會顯示手機的狀態列。
 - **橫向**：
   - 道路畫面佔滿螢幕，左側是按鈕列。
   - 點「全螢幕」或開啟「自動進入全螢幕」時，會自動轉成橫向。
 - **道路畫面**：
   - **路徑與車道**：預測路徑、車道線、道路邊緣。
+    - 彩虹模式（顯示設定）：儀表介面的路徑改為沿路徑排列的彩虹色帶，持續流動；原版介面不受影響。
   - **前車**：
-    - leadOne（主要前車）：白色鎖定框，中間有十字線。
+    - leadOne（主要前車）：鎖定框，大小跟著前車在畫面上的車身尺寸（寬 1.8 m、高 1.5 m 投影）變化。
+      - 遠距離：四角括號 + 十字線，標籤（距離 · 前車速度）在框下方。
+      - 近距離（車身寬超過原本框的上限）：改成框住整台車的方框（半透明底、四角加粗），
+        標籤放大並移到框內約車牌位置；框最寬為畫面寬 70%。
     - leadTwo：目標下方的紅色向上箭頭。和 leadOne 位置幾乎重疊時不畫（距離差 3 m 內且橫向差 1.5 m 內）。
       - openpilot 的 leadTwo 不是「第二台車」，而是模型對「2 秒後前車」的預測所配對到的目標，大多數時間就是 leadOne 那台車，所以箭頭平常不會出現。只有在切入、變換車道、前車離開等情況下才會看到。
       - log 每 60 秒會記錄一行「前車資料」，可以看到 leadTwo 和 leadOne 不同的次數。
@@ -124,6 +129,18 @@ opview 在手機上即時顯示 [openpilot](https://github.com/commaai/openpilot
 - 橫向會在道路畫面上顯示通知。
 - 只供顯示，不會送回 comma、不影響控車。
 
+### LINE 通知
+- 直向資訊區顯示 LINE 訊息，每則顯示 30 秒，至少兩行；行數依可用高度自動決定。
+- 與停車查詢同時開啟時：LINE 在上、停車在下，LINE 佔剩餘高度約 40%（至少兩行），停車拿其餘（至少 100）；
+  高度不夠放停車面板時只顯示 LINE。只開 LINE、停車查詢關閉時，剩餘高度全給 LINE。
+- LINE 區高度固定預留（沒有訊息時是空白），儀表卡片與停車面板不會因訊息出現 / 消失而跳動。
+- 群組訊息顯示為「群組名 · 寄件者」。
+- 需要在 Android「通知存取權」授權 opview。第一次開啟時會引導到系統設定頁。
+  - 從 APK 安裝的 App 在 Android 13 以後屬於「受限制的設定」：要先到「應用程式資訊 → ⋮ → 允許受限制的設定」，才能打開通知存取權。
+- 讀不到時，log 會每 60 秒記錄一行診斷：授權狀態、服務是否連線、收到幾則等；分享 log 前也會補一行。
+  - 已授權但服務沒有連線時，會自動要求系統重新綁定，最多 3 次。
+- **隱私**：訊息只放在記憶體，30 秒後移除，不寫入 log，log 只記錄數量。
+
 ### 附近停車場與空位（本分支限定）
 - 用手機定位查詢附近的路邊、路外停車場和剩餘車位，顯示在直向資訊區。點選場地會用導航 App 開啟。
 - **資料來源**：
@@ -144,10 +161,12 @@ opview 在手機上即時顯示 [openpilot](https://github.com/commaai/openpilot
 | 設定 | 預設 | 說明 |
 |---|---|---|
 | 介面 | 儀表介面 | 儀表介面／原版介面／儀表＋車輛資訊 |
+| 彩虹模式 | 關 | 儀表介面的路徑改為流動彩虹色 |
 | 公制 km/h | 開 | 關閉時顯示 mph |
 | 交通部 TDX：TDX 金鑰 | — | 路況顯示與停車查詢共用；未設定時圖示與文字顯示為橘色 |
 | 交通部 TDX：TDX 路況顯示 | 開 | 手機定位抓取前方車速與事件；下方顯示即時狀態 |
 | 交通部 TDX：附近停車場與空位 | — | 開關、搜尋半徑；另有測試模式（與金鑰在同一個設定頁） |
+| 顯示 LINE 通知（直向） | 關 | 見上方「LINE 通知」 |
 | 打開 App 自動進入 opview | 關 | 跳過主畫面 |
 | 自動進入全螢幕 | 關 | 連線且畫面開始更新 3 秒後進入全螢幕並轉為橫向 |
 | 前車起步偵測／綠燈起步偵測／車輛停等計時 | 關 | 見上方「停等與起步提醒」 |
@@ -282,7 +301,7 @@ scripts/release.sh 0.3.0      # 指定版本
 │   │   ├── settings/                      # 顯示設定、OP 設定網頁連結
 │   │   └── onroad/
 │   │       ├── augmented_road_view.dart   # opview 畫面：直向／橫向版面、圖層
-│   │       ├── model_renderer.dart        # 路徑、車道、道路邊緣、leadOne 十字框、leadTwo 箭頭
+│   │       ├── model_renderer.dart        # 路徑（含彩虹模式）、車道、道路邊緣、leadOne 鎖定框（近距離放大）、leadTwo 箭頭
 │   │       ├── dashboard_hud.dart  compact_hud.dart  hud_renderer.dart  throttled_hud.dart
 │   │       ├── alert_renderer.dart        # comma 事件（道路畫面底部）
 │   │       ├── blindspot_glow.dart        # 盲點黃色光暈
@@ -297,11 +316,13 @@ scripts/release.sh 0.3.0      # 指定版本
 │       ├── alert_sound.dart               # 提醒聲音
 │       ├── app_log.dart  latency_tracker.dart  webrtc_native_log.dart
 │       ├── viewer_settings.dart  viewer_system.dart  comma_models_api.dart
+│       ├── line_notifications.dart        # LINE 通知接收、30 秒到期、診斷
 │       ├── tdx/                           # TDX 路況（手機內建）：tdx_traffic_core 計算、tdx_traffic_service 定位與抓取
 │   │   └── parking/                        # 停車查詢：TDX / 地方政府資料、快取、節流、定位（本分支）
 ├── android/app/src/main/kotlin/org/dragonpilot/opview/
         ├── OpviewKeepAliveService.kt      # 背景執行前景服務（保留起步語音）
-        └── MainActivity.kt                # 系統通道：亮度、狀態列、閃退原因、提醒聲音（TTS / 嗶聲）
+        ├── MainActivity.kt                # 系統通道：亮度、狀態列、閃退原因、提醒聲音（TTS / 嗶聲）、LINE 診斷
+        └── OpviewNotificationListener.kt  # 讀取 LINE 通知
 └── test/                                  # 單元／Widget 測試；test/golden 為截圖測試（CI 略過）
 ```
 

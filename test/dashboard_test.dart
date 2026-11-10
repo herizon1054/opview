@@ -33,9 +33,8 @@ void main() {
       expect(find.byType(DashboardHud), findsOneWidget);
       expect(tester.takeException(), isNull);
       expect(find.text('連線資訊'), findsNothing); // 已從側欄移除
-      await tester.tap(find.byIcon(Icons.straighten));
-      await tester.pump();
-      expect(state.isMetric, isFalse);
+      // v21：km/h 按鈕已移除（單位在顯示設定切換）
+      expect(find.byIcon(Icons.straighten), findsNothing);
       await tester.tap(find.text('全螢幕'));
       await tester.pump();
       expect(find.byIcon(Icons.fullscreen_exit), findsOneWidget);
@@ -78,7 +77,7 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('Connecting…'), findsOneWidget);
     // 側欄標籤：單行（不換行）且實際顯示大小 >= 13dp（不被 FittedBox 縮到看不見）
-    for (final text in ['儀表介面', 'km/h', '全螢幕']) {
+    for (final text in ['實驗 關', '全螢幕']) {
       // 只找側欄按鈕（InkWell 內），儀表板的速度單位也叫 km/h
       final rect = tester.getRect(find.descendant(of: find.byType(InkWell), matching: find.text(text)));
       expect(rect.height, inInclusiveRange(13, 30), reason: text);

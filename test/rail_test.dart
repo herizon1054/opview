@@ -28,7 +28,7 @@ void main() {
     await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
       home: AugmentedRoadView(uiState: state, settings: settings, onExit: () {})));
     // 連線資訊、TDX 開關已移除（TDX 開關改到顯示設定）；新增「退出」
-    for (final label in ['儀表介面', 'km/h', '顯示設定', '子母畫面', '全螢幕', '退出']) {
+    for (final label in ['實驗 關', '顯示設定', '子母畫面', '全螢幕', '退出']) {
       // 只找側欄按鈕（InkWell 內），儀表板的速度單位也叫 km/h
       final rect = tester.getRect(find.descendant(of: find.byType(InkWell), matching: find.text(label)));
       expect(rect.bottom, lessThanOrEqualTo(385), reason: label);
@@ -73,8 +73,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
       home: AugmentedRoadView(uiState: state, settings: settings)));
     await tester.pump(const Duration(seconds: 1));
-    // 只點側欄按鈕（InkWell 內）：儀表卡片的速度單位也叫 km/h
-    await tester.tap(find.descendant(of: find.byType(InkWell), matching: find.text('km/h')));
+    // 只點側欄按鈕（InkWell 內）
+    await tester.tap(find.descendant(of: find.byType(InkWell), matching: find.text('實驗 關')));
     await tester.pump(const Duration(seconds: 6));
     expect(find.text('全螢幕'), findsOneWidget);
     await tester.pumpWidget(const SizedBox.shrink());
@@ -94,6 +94,32 @@ void main() {
     await tester.tap(find.text('退出'));
     expect(exited, 1);
     await tester.pumpWidget(const SizedBox.shrink());
+    state.dispose();
+  });
+
+  testWidgets('rail: first button is the experimental mode toggle; no km/h button', (tester) async {
+    phone(tester);
+    final settings = ViewerSettings();
+    final state = createMockUIState()..modernOverlay = true..isConnected = false;
+    Future<void> show() => tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
+      home: AugmentedRoadView(uiState: state, settings: settings, onExit: () {})));
+    await show();
+    expect(find.byIcon(Icons.straighten), findsNothing);
+    expect(find.descendant(of: find.byType(InkWell), matching: find.text('km/h')), findsNothing);
+    expect(find.byIcon(Icons.science_outlined), findsOneWidget);
+    // 未連線：不送出，提示原因
+    await tester.tap(find.descendant(of: find.byType(InkWell), matching: find.text('實驗 關')));
+    await tester.pump();
+    expect(find.text('未連線 comma，無法切換實驗模式'), findsOneWidget);
+    // 狀態以 comma 回報為準
+    state.experimentalMode = true;
+    await show();
+    expect(find.descendant(of: find.byType(InkWell), matching: find.text('實驗 開')), findsOneWidget);
+    expect(find.byIcon(Icons.science), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(seconds: 3));
+    settings.dispose();
     state.dispose();
   });
 }

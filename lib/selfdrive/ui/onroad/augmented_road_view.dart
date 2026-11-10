@@ -20,6 +20,8 @@ import 'blindspot_glow.dart';
 import 'vehicle_details.dart';
 import '../settings/viewer_settings_dialog.dart';
 import 'package:opview/services/viewer_settings.dart';
+import 'package:opview/services/comma_experimental_api.dart';
+import 'package:opview/services/comma_models_api.dart' show CommaApiException;
 import 'package:opview/services/parking/parking_config.dart';
 import 'package:opview/services/viewer_system.dart' as system;
 import 'package:flutter/foundation.dart';
@@ -176,12 +178,13 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
 
   // -- 側欄尺寸 --
   // 內容區寬度固定；左側瀏海 / 挖孔安全區另外加寬，不再從內容寬度裡扣
-  static const double _railContentWidth = 88;
+  static const double _railContentWidth = 96;
   // 按鈕高度依側欄可用高度自動分配：所有按鈕盡量一屏放下不用捲動。
   // 圖示 / 字級隨按鈕高度在 min~max 之間等比縮放；低於最小可點高度才改為捲動。
-  static const double _railBtnMaxH = 62, _railBtnMinH = 44;
-  static const double _railIconMax = 24, _railIconMin = 19;
-  static const double _railFontMax = 13, _railFontMin = 11;
+  // v21：移除 km/h 按鈕後，其餘按鈕放大（高度上限 62 → 78、圖示 24 → 32、字級 13 → 15）
+  static const double _railBtnMaxH = 78, _railBtnMinH = 48;
+  static const double _railIconMax = 32, _railIconMin = 22;
+  static const double _railFontMax = 15, _railFontMin = 12;
   static const double _railBtnGapV = 2;          // 按鈕上下間距（各邊）
   static const double _railHeaderH = 30;         // 頂部 LIVE / OFFLINE 區
   static const double _railFooterH = 6;
@@ -202,7 +205,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
         child: InkWell(onTap: () { _cancelAutoFullscreen(); item.onTap(); },
           child: Padding(padding: const EdgeInsets.symmetric(horizontal: 4),
             child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-              Icon(item.icon, color: dashboardTeal, size: iconSize),
+              Icon(item.icon, color: item.color ?? dashboardTeal, size: iconSize),
               SizedBox(height: 2 + 2 * t),
               _railLabel(item.label, TextStyle(fontSize: fontSize, height: 1.15,
                   color: Colors.white70)),
@@ -236,23 +239,44 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
     system.setLandscapeOnly(false);
   }
 
+  bool _expBusy = false;
+
+  Future<void> _toggleExperimental() async {
+    if (_expBusy) return;
+    final host = widget.opHost?.call();
+    void say(String text) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(text), duration: const Duration(seconds: 2)));
+    }
+    if (host == null || host.isEmpty || !widget.uiState.isConnected) {
+      say('未連線 comma，無法切換實驗模式');
+      return;
+    }
+    final want = !widget.uiState.experimentalMode;
+    setState(() => _expBusy = true);
+    try {
+      final now = await setCommaExperimentalMode(host, want);
+      debugPrint('[opview] 實驗模式：要求 ${want ? '開' : '關'} → comma 回報 ${now ? '開' : '關'}');
+      say(now == want ? (now ? '已開啟實驗模式' : '已關閉實驗模式') : 'comma 未切換實驗模式');
+    } catch (e) {
+      debugPrint('[opview] 實驗模式切換失敗：$e');
+      say(e is CommaApiException ? e.message : '連不到 comma，實驗模式未切換');
+    } finally {
+      if (mounted) setState(() => _expBusy = false);
+    }
+  }
+
   List<_RailItem> _railItems() => [
-    _RailItem(Icons.dashboard_outlined, widget.uiState.modernOverlay ? '儀表介面' : '原版介面', () {
-      if (widget.settings != null) {
-        widget.settings!.setLayout(widget.uiState.modernOverlay ? ViewerLayout.classic : ViewerLayout.dashboard);
-      } else {
-        setState(() { widget.uiState.modernOverlay = !widget.uiState.modernOverlay; });
-      }
-      widget.uiState.notifyNow();
-    }),
-    _RailItem(Icons.straighten, widget.uiState.isMetric ? 'km/h' : 'mph', () {
-      if (widget.settings != null) {
-        widget.settings!.setMetric(!widget.uiState.isMetric);
-      } else {
-        setState(() { widget.uiState.isMetric = !widget.uiState.isMetric; });
-      }
-      widget.uiState.notifyNow();
-    }),
+    // 第一顆：實驗模式開關（寫入 comma 的 ExperimentalMode，見 comma_experimental_api.dart）。
+    // 顯示的狀態以 comma 回報的 selfdriveState.experimentalMode 為準。
+    // （km/h 按鈕已移除，單位在顯示設定切換；介面 / 儀表卡片也只在顯示設定切換）
+    _RailItem(
+      widget.uiState.experimentalMode ? Icons.science : Icons.science_outlined,
+      _expBusy ? '切換中…' : widget.uiState.experimentalMode ? '實驗 開' : '實驗 關',
+      _toggleExperimental,
+      color: widget.uiState.experimentalMode ? Colors.amberAccent : null),
     // TDX 路況顯示開關已移到「顯示設定」
     if (widget.settings != null && widget.uiState.alertSize == 0)
       _RailItem(Icons.settings_outlined, '顯示設定', _openSettings),
@@ -419,7 +443,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                               widget.uiState.tdxNextSpeedDisplay, widget.uiState.tdxCongestion,
                               widget.uiState.tdxEnabled,
                               widget.uiState.leftBlinker, widget.uiState.rightBlinker,
-                              widget.uiState.gearShifter),
+                              widget.uiState.gearShifter, widget.uiState.hideHudCard),
                             builder: () => Stack(fit: StackFit.expand, children: [
                               // 直向（方案 B）：儀表卡片與兩側方向燈都在影像下方的 PortraitPanel
                               if (widget.uiState.modernOverlay) ...[
@@ -548,7 +572,8 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                 widget.uiState.tdxNextSpeedDisplay, widget.uiState.tdxCongestion,
                 widget.uiState.tdxEventText, widget.uiState.gearShifter,
                 widget.uiState.leftBlinker, widget.uiState.rightBlinker,
-                widget.settings?.lineNotify ?? false, ParkingConfig.instance.enabled),
+                widget.settings?.lineNotify ?? false, ParkingConfig.instance.enabled,
+                widget.uiState.hideHudCard, widget.uiState.experimentalMode),
               builder: () => PortraitPanel(state: widget.uiState, stale: _stale,
                   lineEnabled: widget.settings?.lineNotify ?? false),
             ),
@@ -568,6 +593,8 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
   }
 
   // 直向操作列：畫面最下方一排按鈕（同側欄的按鈕與順序），左側小字顯示 LIVE / OFFLINE
+  // 操作列高度固定 64（不可改變）；v21 移除 km/h 按鈕後，按鈕變寬，圖示 20 → 28、字級 11 → 14
+  // （64 扣下方間距 6 = 58；圖示 28 + 間距 4 + 字 14 × 1.2 倍字型 × 1.15 ≈ 51，放得下）
   static const double _barHeight = 64;
   Widget _bottomBar() {
     final mq = MediaQuery.of(context);
@@ -590,10 +617,10 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                 clipBehavior: Clip.antiAlias,
                 child: InkWell(onTap: () { _cancelAutoFullscreen(); item.onTap(); },
                   child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Icon(item.icon, color: dashboardTeal, size: 20),
-                    const SizedBox(height: 3),
+                    Icon(item.icon, color: item.color ?? dashboardTeal, size: 28),
+                    const SizedBox(height: 4),
                     Padding(padding: const EdgeInsets.symmetric(horizontal: 2),
-                      child: _railLabel(item.label, const TextStyle(fontSize: 11, height: 1.15, color: Colors.white70))),
+                      child: _railLabel(item.label, const TextStyle(fontSize: 14, height: 1.15, color: Colors.white70))),
                   ])),
               ),
             )),
@@ -765,5 +792,6 @@ class _RailItem {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-  const _RailItem(this.icon, this.label, this.onTap);
+  final Color? color; // 圖示顏色（預設 dashboardTeal；實驗模式開啟時為琥珀色）
+  const _RailItem(this.icon, this.label, this.onTap, {this.color});
 }

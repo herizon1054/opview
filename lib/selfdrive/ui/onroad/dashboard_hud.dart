@@ -80,9 +80,11 @@ class DashboardHud extends StatelessWidget {
             const SizedBox(height: 6), _badge(status, color),
           ],
         )),
-      Positioned(bottom: bottom, left: cardLeft, width: width,
-        height: cardH,
-        child: DashboardCard(state: state, stale: stale)),
+      // 「無卡片」：不畫卡片，方向燈箭頭仍在原位置
+      if (!state.hideHudCard)
+        Positioned(bottom: bottom, left: cardLeft, width: width,
+          height: cardH,
+          child: DashboardCard(state: state, stale: stale)),
       // 方向燈：儀表卡片左右兩側的箭頭，閃爍（carState.leftBlinker / rightBlinker）
       if (!stale && state.leftBlinker)
         _blinker(left: true, cardLeft: cardLeft, cardW: width, cardH: cardH, bottom: bottom, boxW: box.maxWidth),
@@ -131,18 +133,26 @@ class DashboardCard extends StatelessWidget {
   final UIState state;
   final bool stale;
   final bool tdxInRightColumn;
+  /// 內容（字級、圖示）依此高度計算；卡片實際高度可以比它矮（直向：卡片變矮、字不變小）。
+  /// null = 依卡片實際高度（橫向，原本行為）。
+  final double? contentHeight;
+  /// 實驗模式時在卡片左上角顯示小的 EXP 標記（直向用；不佔額外高度）
+  final bool expBadge;
   const DashboardCard({super.key, required this.state, this.stale = false,
-    this.tdxInRightColumn = true});
+    this.tdxInRightColumn = true, this.contentHeight, this.expBadge = false});
 
   @override
   Widget build(BuildContext context) {
     final (_, color) = dashboardStatus(state, stale);
     return LayoutBuilder(builder: (context, constraints) {
-      final h = constraints.maxHeight;
+      final boxH = constraints.maxHeight;
+      final h = contentHeight ?? boxH;
+      // 中間欄上下間距：原本 0.09h + 0.07h；卡片比內容高度矮時縮小間距（文字約佔 0.62h），字級不變
+      final gaps = math.min(.16 * h, math.max(0.0, boxH - .63 * h));
       return DecoratedBox(decoration: BoxDecoration(
-        color: const Color(0xDC0D171C), borderRadius: BorderRadius.circular(h * .17),
+        color: const Color(0xDC0D171C), borderRadius: BorderRadius.circular(math.min(h * .17, boxH * .5)),
         border: Border.all(color: const Color(0x335DE3D4))),
-        child: Row(children: [
+        child: Stack(children: [Positioned.fill(child: Row(children: [
           Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
             Text('MAX', style: TextStyle(color: color, fontSize: h * .10,
                 fontWeight: FontWeight.w700, letterSpacing: 2)),
@@ -166,13 +176,22 @@ class DashboardCard extends StatelessWidget {
                 Text(state.isMetric ? 'km/h' : 'mph',
                   style: TextStyle(fontSize: h * .10, color: Colors.white70)),
               ],
-              SizedBox(height: h * .09),
+              SizedBox(height: gaps * .5625),
               Text(stale ? (state.dataLagging ? 'TELEMETRY DELAYED' : 'TELEMETRY STALE') : 'LIVE TELEMETRY',
                 style: TextStyle(fontSize: h * .065, color: color, letterSpacing: 1.3)),
-              SizedBox(height: h * .07),
+              SizedBox(height: gaps * .4375),
             ])),
           )),
           Expanded(child: _rightColumn(h, color)),
+        ])),
+          // EXP：卡片左上角（圓角內側），MAX 標籤上方，不佔版面高度
+          if (expBadge && state.experimentalMode && !stale)
+            Positioned(left: h * .15, top: h * .07, child: Container(
+              padding: EdgeInsets.symmetric(horizontal: h * .035),
+              decoration: BoxDecoration(borderRadius: BorderRadius.circular(h * .04),
+                border: Border.all(color: Colors.amberAccent.withAlpha(200))),
+              child: Text('EXP', style: TextStyle(fontSize: h * .075, color: Colors.amberAccent,
+                fontWeight: FontWeight.w800, letterSpacing: 1, height: 1.2)))),
         ]));
     });
   }

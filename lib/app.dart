@@ -63,6 +63,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     LineNotifications.instance.setEnabled(_settings.lineNotify);
     _uiState.modernOverlay = _settings.layout != ViewerLayout.classic;
     _uiState.rainbowPath = _settings.rainbowPath;
+    _uiState.hideHudCard = _settings.hideHudCard;
     StopGoAlerts.instance.configure(greenLight: _settings.greenLightAlert,
         leadDepart: _settings.leadDepartAlert, standstillTimer: _settings.standstillTimer);
     _syncBackgroundWish();

@@ -35,12 +35,18 @@ class ViewerSettingsDialog extends StatelessWidget {
               DropdownMenuItem(value: ViewerLayout.detailed, child: Text('儀表＋車輛資訊')),
             ], onChanged: (v) { if (v != null) settings.setLayout(v); }),
           SwitchListTile(contentPadding: EdgeInsets.zero,
+            secondary: const Icon(Icons.speed),
+            title: const Text('顯示儀表卡片'),
+            subtitle: const Text('關閉後不顯示車速卡片（直向空間讓給 LINE 與停車）'),
+            value: !settings.hideHudCard, onChanged: (v) => settings.setHideHudCard(!v)),
+          SwitchListTile(contentPadding: EdgeInsets.zero,
             secondary: const Icon(Icons.gradient),
             title: const Text('彩虹模式'),
             subtitle: Text(settings.layout == ViewerLayout.classic
                 ? '行駛路徑改為流動彩虹色（原版介面不適用，切到儀表介面才看得到）'
                 : '行駛路徑改為流動彩虹色'),
             value: settings.rainbowPath, onChanged: settings.setRainbowPath),
+          // 側欄 / 操作列的 km/h 按鈕已移除，單位只在這裡切換
           SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('公制 km/h'),
             value: settings.metric, onChanged: settings.setMetric),
           // 交通部 TDX：路況與停車共用同一組金鑰與每分鐘 5 次額度（手機端抓取，不需要 comma 分支支援）

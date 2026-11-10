@@ -30,7 +30,8 @@ void main() {
     expect(tester.takeException(), isNull);
 
     // 操作列在畫面下方、全部在畫面內
-    for (final label in ['儀表介面', 'km/h', '顯示設定', '全螢幕', '退出']) {
+    // 第一顆為實驗模式開關（此測試 experimentalMode = true）
+    for (final label in ['實驗 開', '顯示設定', '全螢幕', '退出']) {
       // 只找操作列按鈕（InkWell 內）：儀表卡片的速度單位也叫 km/h
       final r = tester.getRect(find.descendant(of: find.byType(InkWell), matching: find.text(label)));
       expect(r.top, greaterThan(844 * .8), reason: '$label 應在下方操作列');

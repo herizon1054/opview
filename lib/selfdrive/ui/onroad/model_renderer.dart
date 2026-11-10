@@ -212,13 +212,13 @@ class ModelRendererPainter extends CustomPainter {
       final d = over ? maxDist : x;
       double y = pathY[i], z = pathZ[i];
       if (over && i > 0 && x != pathX[i - 1]) {
-        final k = ((maxDist - pathX[i - 1]) / (x - pathX[i - 1])).clamp(0.0, 1.0);
+        final k = ((maxDist - pathX[i - 1]) / (x - pathX[i - 1])).clamp(0.0, 1.0).toDouble();
         y = pathY[i - 1] + k * (y - pathY[i - 1]);
         z = pathZ[i - 1] + k * (z - pathZ[i - 1]);
       }
       final sy = _projectY(d, y, z + _pathOffsetZ);
       if (sy != null) {
-        final f = ((maxY - sy) / h).clamp(0.0, 1.0);
+        final f = ((maxY - sy) / h).clamp(0.0, 1.0).toDouble();
         if (f > lastPos + .002) {
           dist.add(d);
           pos.add(f);
@@ -234,10 +234,10 @@ class ModelRendererPainter extends CustomPainter {
 
     // 點太多時抽樣（保留最後一點），並補齊 0 / 1 兩端
     final colors = <Color>[], stops = <double>[];
-    final step = (dist.length / _rainbowMaxStops).ceil().clamp(1, dist.length);
+    final step = max(1, (dist.length / _rainbowMaxStops).ceil());
     if (pos.first > 0) {
       colors.add(colorAt(dist.first));
-      stops.add(0);
+      stops.add(0.0);
     }
     for (var i = 0; i < dist.length; i += step) {
       colors.add(colorAt(dist[i]));
@@ -249,7 +249,7 @@ class ModelRendererPainter extends CustomPainter {
     }
     if (stops.last < 1) {
       colors.add(colorAt(dist.last));
-      stops.add(1);
+      stops.add(1.0);
     }
     if (colors.length < 2) {
       _drawPolygon(canvas, pathPoly, colors.first);

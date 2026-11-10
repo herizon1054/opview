@@ -84,7 +84,11 @@ class DashboardHud extends StatelessWidget {
       if (!state.hideHudCard)
         Positioned(bottom: bottom, left: cardLeft, width: width,
           height: cardH,
-          child: DashboardCard(state: state, stale: stale)),
+          child: DashboardCard(state: state, stale: stale))
+      // 無卡片時 TDX 前方車速原本在卡片右欄、會跟著消失 → 在卡片位置底部改顯示一個小膠囊
+      else if (!stale && state.tdxNextSpeedDisplay != null)
+        Positioned(bottom: bottom, left: cardLeft, width: width,
+          child: Center(child: tdxSpeedChip(state, height: (cardH * .32).clamp(30.0, 44.0).toDouble()))),
       // 方向燈：儀表卡片左右兩側的箭頭，閃爍（carState.leftBlinker / rightBlinker）
       if (!stale && state.leftBlinker)
         _blinker(left: true, cardLeft: cardLeft, cardW: width, cardH: cardH, bottom: bottom, boxW: box.maxWidth),
@@ -106,6 +110,33 @@ class DashboardHud extends StatelessWidget {
   }
 
   Widget _badge(String text, Color color) => dashboardBadge(text, color);
+}
+
+/// 無卡片（橫向）時的 TDX 前方車速：「前方車速 72 km/h 順暢」，數字與分級依壅塞上色
+Widget tdxSpeedChip(UIState state, {double height = 36}) {
+  final c = tdxCongestionColor(state.tdxCongestion);
+  final label = switch (state.tdxCongestion) {
+    'smooth' => '順暢', 'slow' => '車多', 'congested' => '壅塞', _ => '',
+  };
+  final small = TextStyle(fontSize: height * .34, color: Colors.white70, height: 1);
+  return Container(
+    height: height,
+    padding: EdgeInsets.symmetric(horizontal: height * .4),
+    decoration: BoxDecoration(color: const Color(0xDC0D171C), borderRadius: BorderRadius.circular(height / 2),
+      border: Border.all(color: c.withAlpha(120))),
+    child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.center, children: [
+      Text('前方車速', style: small),
+      SizedBox(width: height * .25),
+      Text('${state.tdxNextSpeedDisplay}', style: TextStyle(fontSize: height * .58, color: c,
+          fontWeight: FontWeight.w700, height: 1)),
+      SizedBox(width: height * .12),
+      Text(state.isMetric ? 'km/h' : 'mph', style: small),
+      if (label.isNotEmpty) ...[
+        SizedBox(width: height * .25),
+        Text(label, style: small.copyWith(color: c, fontWeight: FontWeight.w600)),
+      ],
+    ]),
+  );
 }
 
 /// 狀態徽章文字與顏色（儀表介面與直向下方儀表區共用）

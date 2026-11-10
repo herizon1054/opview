@@ -72,6 +72,8 @@ opview 在手機上即時顯示 [openpilot](https://github.com/commaai/openpilot
   - 「無卡片」時只隱藏下方的儀表卡片（含卡片內的 TDX 前方車速），方向燈箭頭與狀態徽章保留。
   - 點「全螢幕」或開啟「自動進入全螢幕」時，會自動轉成橫向。
 - **道路畫面**：
+  - **實驗模式圖示**：開啟實驗模式時，道路畫面左側中上（高度約 35% 處）顯示琥珀色燒杯圖示
+    （直向、橫向、儀表 / 原版介面都有）。
   - **路徑與車道**：預測路徑、車道線、道路邊緣。
     - 彩虹模式（顯示設定）：儀表介面的路徑改為沿路徑排列的彩虹色帶，持續流動；原版介面不受影響。
   - **前車**：
@@ -317,6 +319,7 @@ scripts/release.sh 0.3.0      # 指定版本
 │   │       ├── alert_renderer.dart        # comma 事件（道路畫面底部）
 │   │       ├── blindspot_glow.dart        # 盲點黃色光暈
 │   │       ├── portrait_panel.dart        # 直向資訊區
+│   │       ├── experimental_badge.dart    # 實驗模式圖示（道路畫面左側中上）
 │   │       ├── tdx_marquee.dart           # TDX 跑馬燈
 │   │       └── stop_go_overlay.dart       # 起步提醒／停等計時圓形提示
 │   ├── system/webrtc/                     # WebRTC client、webrtcd API、生命週期佇列

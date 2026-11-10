@@ -55,7 +55,8 @@ class TdxTrafficService {
   static final instance = TdxTrafficService();
 
   /// 狀態文字（顯示設定的 TDX 開關副標題用）
-  final status = ValueNotifier<String>('未啟用');
+  final status = ValueNotifier<String>(_idleStatus);
+  static const _idleStatus = '待命（進入 opview 畫面後開始）';
 
   UIState? _ui;
   bool _active = false;
@@ -84,6 +85,7 @@ class TdxTrafficService {
   DateTime _failUntil = DateTime.fromMillisecondsSinceEpoch(0);
   bool? _online;
   bool _skipped = false; // 上一次 _callBytes 是因額度 / 停車查詢中而略過（不是失敗）
+  String _lastErr = '無網路'; // 上一次失敗原因（顯示設定的狀態文字用）
   String? _auth;
 
   // 連線
@@ -128,7 +130,7 @@ class TdxTrafficService {
     _client = null;
     _fixAt = null;
     _ui?.resetTdx();
-    status.value = '未啟用';
+    status.value = _idleStatus;
   }
 
   void _configChanged() {
@@ -221,12 +223,12 @@ class TdxTrafficService {
         showCurrentFirst: (DateTime.now().millisecondsSinceEpoch ~/ 10000) % 2 == 0,
       );
       _ui?.applyTdx(rep);
-      final where = switch (rep['auth']) {
+      final where = _hd == null ? '等待行駛方向（車速 11 km/h 以上）' : switch (rep['auth']) {
         'Freeway' => '國道', 'Highway' => '省道', 'City' => '市區道路', _ => '不在 TDX 路段上',
       };
       final road = rep['road'] as String? ?? '';
       status.value = _online == false
-          ? '無網路，略過（$where）'
+          ? '$_lastErr，60 秒後重試（$where）'
           : '$where${road.isEmpty ? '' : ' $road'}${live == null ? '' : '，車速 ${(nowWall - live.$1).round()} 秒前'}';
     } catch (e, st) {
       debugPrint('[tdx] report 例外：$e\n$st');
@@ -351,11 +353,16 @@ class TdxTrafficService {
           debugPrint('[tdx] 車速格式異常：$e');
         }
       }
-      await events(auth);
+      // 彰化、雲林有即時車速但沒有事件資料（TDX 回 404 → 會被當成離線 60 秒並浪費一次額度）
+      if (_hasEvents(auth)) await events(auth);
     } else if (city != null && tdxEventCities.contains(city)) {
       await events('City:$city');
     }
   }
+
+  /// 這個 auth 在 TDX 有沒有即時事件（國道、省道都有；縣市見 tdxEventCities）
+  static bool _hasEvents(String auth) =>
+      !auth.startsWith('City:') || tdxEventCities.contains(auth.substring(5));
 
   static String _sub(String auth) => auth.startsWith('City:') ? 'City/${auth.substring(5)}' : auth;
   static String _livePath(String auth) => 'v2/Road/Traffic/Live/${_sub(auth)}';
@@ -480,6 +487,11 @@ class TdxTrafficService {
       return bytes;
     } catch (e) {
       if (_online != false) debugPrint('[tdx] 離線或失敗（$e），60 秒後再試');
+      final m = '$e';
+      _lastErr = RegExp(r'HTTP (400|401|403)\b').hasMatch(m) ? 'TDX 金鑰錯誤或未授權'
+          : m.contains('HTTP 429') ? 'TDX 額度已滿'
+          : m.contains('HTML') ? 'TDX 拒絕存取'
+          : m.contains('HTTP ') ? 'TDX 回應異常' : '無網路';
       _online = false;
       _failUntil = DateTime.now().add(const Duration(seconds: 60));
       return null;

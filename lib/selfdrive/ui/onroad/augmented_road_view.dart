@@ -15,6 +15,7 @@ import 'compact_hud.dart';
 import 'throttled_hud.dart';
 import 'tdx_marquee.dart';
 import 'stop_go_overlay.dart';
+import 'experimental_badge.dart';
 import 'package:opview/services/stop_go_alerts.dart';
 import 'blindspot_glow.dart';
 import 'vehicle_details.dart';
@@ -392,6 +393,12 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
         // HUD / 警示 / 邊框依「短邊」縮放：橫向 = 高（與原本相同），直向 = 寬（避免直向時被放大到超出寬度）
         final scale = min(screenW, screenH) / 1080.0;
         final borderSize = (widget.pip || widget.uiState.modernOverlay ? 3 : uiBorderSize) * scale;
+        // 實驗模式圖示：道路畫面左側中上（圖示中心在畫面高度 35%），左緣 12；
+        // 直向 34 dp，橫向依短邊縮放（36~56 dp）。左側中上沒有其他元件（opview 標題在左上、狀態徽章在左下），
+        // 右上角的起步提醒圓圈、車輛資訊框、全螢幕叫回按鈕都不用讓位
+        final expShown = !widget.pip && !_stale && widget.uiState.experimentalMode;
+        final expSize = portrait ? 34.0 : (88 * scale).clamp(36.0, 56.0).toDouble();
+        final expTop = (screenH - 2 * borderSize) * .35 - expSize / 2;
 
         // recompute transform only when inputs change
         final transform = _getTransform(screenW, screenH);
@@ -466,6 +473,9 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                         if (!widget.pip && !_stale && (StopGoAlerts.instance.greenLightEnabled ||
                             StopGoAlerts.instance.leadDepartEnabled || StopGoAlerts.instance.standstillTimerEnabled))
                           Positioned.fill(child: StopGoOverlay(state: widget.uiState, screenH: screenH)),
+                        // 實驗模式圖示：道路畫面左側中上
+                        if (expShown)
+                          Positioned(top: expTop, left: 12, child: ExperimentalBadge(size: expSize)),
                       ],
                     ),
                   ),
@@ -526,10 +536,11 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                   ),
                 )),
 
+              // 重新連線：放右下角。原本在左下角，橫向會蓋住卡片左側的狀態徽章（資料中斷 / EXPERIMENTAL）
               if (!widget.pip && !widget.uiState.isConnected && widget.onReconnect != null)
                 Positioned(
                   bottom: 24,
-                  left: 24,
+                  right: 24,
                   child: ElevatedButton.icon(
                     onPressed: widget.onReconnect,
                     icon: const Icon(Icons.refresh),
@@ -573,7 +584,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                 widget.uiState.tdxEventText, widget.uiState.gearShifter,
                 widget.uiState.leftBlinker, widget.uiState.rightBlinker,
                 widget.settings?.lineNotify ?? false, ParkingConfig.instance.enabled,
-                widget.uiState.hideHudCard, widget.uiState.experimentalMode),
+                widget.uiState.hideHudCard),
               builder: () => PortraitPanel(state: widget.uiState, stale: _stale,
                   lineEnabled: widget.settings?.lineNotify ?? false),
             ),

@@ -6,8 +6,10 @@ opview 側欄 / 直向操作列的第一顆按鈕改為「實驗模式」開關�
 - dragonpilot 分支：`dragonpilot/dashy/serverd.py`
 - sunnypilot 分支：opviewd
 
-> 本文件的 comma 端程式碼是**參考實作**：撰寫時手上沒有 serverd.py / opviewd.py 原始碼，
-> 參數名稱與 CarParams 讀法依 openpilot 主線慣例，請對照各分支實際程式碼確認後再套用。
+> **已實作**（2026-11-10）：openpilot-dp0111pre、openpilot-dplcc（`dragonpilot/dashy/serverd.py`）、
+> openpilot-test（sunnypilot，`openpilot/sunnypilot/opview/opviewd.py`）。條件已對照各分支的
+> `selfdrive/ui/layouts/settings/toggles.py`、`selfdrive/ui/ui_state.py`、`selfdrive/selfdrived/selfdrived.py` 確認。
+> 另有 `GET /api/experimental_mode` → `{"experimental_mode", "available", "confirmed"}` 供診斷。
 
 ## 介面
 
@@ -31,12 +33,14 @@ Content-Type: application/json
 
 ## comma 端應檢查的條件（比照 openpilot 設定頁）
 
-1. **只有 openpilot 縱向控制可用時才允許開啟**（`CarParams.openpilotLongitudinalControl`）；否則回 409。
+1. **只有 openpilot 縱向控制可用時才允許開啟**（與 `ui_state.has_longitudinal_control` 相同：車輛有 alpha 縱向時看
+   `AlphaLongitudinalEnabled`，否則看 `CarParamsPersistent.openpilotLongitudinalControl`）；否則回 409。
+   從未發動（沒有 `CarParamsPersistent`）也回 409。
 2. **不要替使用者自動寫入 `ExperimentalModeConfirmed`**：那是 openpilot 設定頁的實驗模式說明確認。
    尚未確認時回 409 `{"error": "請先在 comma 設定頁開啟一次實驗模式並確認說明"}`。
 3. 關閉一律允許。
-4. 行駛中切換：openpilot 主線的 selfdrived 會定期重讀 `ExperimentalMode`，與原廠 onroad 按鈕相同，
-   寫入後下一次讀取即生效。請在各分支確認讀取位置與頻率（dp / sp 可能另有覆寫，例如 dp 的縱向模式設定）。
+4. 行駛中切換：selfdrived 的 `params_thread` 每 0.1 秒重讀 `ExperimentalMode`（且需 `openpilotLongitudinalControl`），
+   與原廠設定頁 / onroad 按鈕相同，寫入後即生效（三個分支皆已確認）。
 
 ## 參考實作（Python，框架無關）
 

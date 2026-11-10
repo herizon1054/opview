@@ -9,7 +9,8 @@
 //     404                                                comma 端尚未加入此端點（分支未更新）
 //
 // comma 端應比照 openpilot 設定頁 / onroad 按鈕的條件：只有 openpilot 縱向控制可用時才允許開啟，
-// 並寫入 ExperimentalMode（開啟時一併寫 ExperimentalModeConfirmed）。
+// 並寫入 ExperimentalMode；尚未在 comma 設定頁確認過實驗模式說明（ExperimentalModeConfirmed）時拒絕開啟，
+// 不代替使用者確認（見 COMMA_EXPERIMENTAL_ENDPOINT_zh-TW.md）。
 // 實際是否開啟以 selfdriveState.experimentalMode 為準（UIState.experimentalMode），按鈕依它顯示。
 
 import 'dart:convert';

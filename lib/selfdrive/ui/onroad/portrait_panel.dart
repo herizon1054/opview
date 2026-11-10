@@ -258,25 +258,29 @@ class PortraitPanel extends StatelessWidget {
         child: LayoutBuilder(builder: (context, box) {
           final scaler = MediaQuery.textScalerOf(context);
           final lineH = scaler.scale(lineFont) * lineHeight;
-          // +0.5 px 容差：高度剛好等於整數行時，浮點誤差不會少算一行
-          var remaining = ((box.maxHeight + .5) / lineH).floor();
+          // 每行高度鎖定（含 emoji 的行不會被撐高），算出的行數與實際畫出來一致
+          const strut = StrutStyle(fontSize: lineFont, height: lineHeight, forceStrutHeight: true);
+          // 以像素計算剩餘空間：訊息間距只扣 lineMsgGap（原本每個間距算成一整行，
+          // 3 則訊息會浪費 2 行、最後一則被提早截斷）；+0.5 px 容差避免浮點誤差少算一行
+          var leftPx = box.maxHeight + .5;
           final children = <Widget>[];
-          for (var i = 0; i < msgs.length && remaining > 0; i++) {
+          for (var i = 0; i < msgs.length; i++) {
+            final gapPx = i == 0 ? 0.0 : lineMsgGap;
+            final avail = ((leftPx - gapPx) / lineH).floor();
+            if (avail <= 0) break;
             final span = _lineSpan(msgs[i]);
             final style = TextStyle(fontSize: lineFont, height: lineHeight,
                 color: i == 0 ? Colors.white : Colors.white60);
-            final tp = TextPainter(text: TextSpan(style: style, children: [span]),
+            final tp = TextPainter(text: TextSpan(style: style, children: [span]), strutStyle: strut,
                 textDirection: TextDirection.ltr, textScaler: scaler)..layout(maxWidth: box.maxWidth);
             final need = tp.computeLineMetrics().length;
             tp.dispose();
-            // 最新一則優先；其餘用剩下的行數
-            final lines = math.min(need, remaining);
-            if (lines <= 0) break;
-            children.add(Padding(padding: EdgeInsets.only(top: i == 0 ? 0 : lineMsgGap),
-              child: Text.rich(span, maxLines: lines, overflow: TextOverflow.ellipsis, style: style)));
-            remaining -= lines;
-            // 訊息間距約佔 lineMsgGap / lineH 行
-            remaining -= (lineMsgGap / lineH).ceil();
+            // 最新一則優先，能完整顯示就完整顯示；其餘用剩下的行數
+            final lines = math.min(need, avail);
+            children.add(Padding(padding: EdgeInsets.only(top: gapPx),
+              child: Text.rich(span, maxLines: lines, overflow: TextOverflow.ellipsis, style: style,
+                  strutStyle: strut)));
+            leftPx -= gapPx + lines * lineH;
           }
           return ClipRect(child: SingleChildScrollView(physics: const NeverScrollableScrollPhysics(),
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: children)));

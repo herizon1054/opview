@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:opview/selfdrive/ui/onroad/augmented_road_view.dart';
 import 'package:opview/selfdrive/ui/onroad/dashboard_hud.dart';
 import 'package:opview/services/line_notifications.dart';
+import 'package:opview/services/parking/parking_config.dart';
+import 'package:opview/selfdrive/ui/onroad/portrait_panel.dart';
 import 'package:opview/services/viewer_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'golden/mock_ui_state.dart';
@@ -67,6 +69,33 @@ void main() {
     LineNotifications.instance.clear(); // 取消 30 秒到期計時器
     await tester.pumpWidget(const SizedBox.shrink());
     settings.dispose();
+    state.dispose();
+  });
+
+  testWidgets('message gaps cost pixels, not whole lines: three 2-line messages all fit', (tester) async {
+    // 無卡片、停車關閉 → LINE 拿下方全部；高度剛好放得下 2 + 2 + 2 行與兩個 6 px 間距
+    // （原本每個間距算成一整行，第三則會被截掉、底下空兩行）
+    ParkingConfig.instance.enabled = false;
+    addTearDown(() => ParkingConfig.instance.enabled = true);
+    final n = LineNotifications.instance;
+    final body = '一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十'; // 30 字 + 寄件者 2 字 = 兩行
+    n.add('甲', '第一則$body');
+    n.add('乙', '第二則$body');
+    n.add('丙', '第三則$body');
+    const rowH = PortraitPanel.lineFont * PortraitPanel.lineHeight;
+    const boxH = PortraitPanel.lineChrome + 6 * rowH + 2 * PortraitPanel.lineMsgGap;
+    final state = createMockUIState()..hideHudCard = true..isConnected = false;
+    await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(), home: Scaffold(body: Align(
+      alignment: Alignment.topCenter,
+      child: SizedBox(width: 390, height: PortraitPanel.topPad + 8 + boxH + 8 + 1,
+        child: PortraitPanel(state: state, lineEnabled: true))))));
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    for (final t in ['第一則', '第二則', '第三則']) {
+      expect(tester.getRect(find.textContaining(t)).height, greaterThanOrEqualTo(2 * rowH - 1), reason: t);
+    }
+    n.clear();
+    await tester.pumpWidget(const SizedBox());
     state.dispose();
   });
 }

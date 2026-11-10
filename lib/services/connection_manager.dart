@@ -44,6 +44,13 @@ const _stallWindows = 2;
 const _stallMaxRecoveries = 3;
 const _stallRecoveryWindow = Duration(minutes: 2);
 
+// 資料中斷偵測（實測 log 2026-11-10：影像照常、RTT 正常，但 data channel 突然完全沒有訊息，
+// 最長持續 90 秒以上，畫面在動、車速 / 路徑停住；使用者退出再進入才恢復）。
+//   影像封包照收（≥ 100 / 5 秒）但已超過 8 秒沒收到任何資料 → 重建連線。
+//   與影像卡住共用「2 分鐘內最多 3 次」的上限。8 秒高於 log 中自行恢復的最長空窗（約 3 秒，偶有 10 秒）
+//   的大多數情況，又遠短於使用者會自己退出重進的時間。
+const _dataStallLimit = Duration(seconds: 8);
+
 // delay before re-discovery after all retries exhausted
 const _rediscoverDelay = Duration(seconds: 15);
 
@@ -313,6 +320,8 @@ class ConnectionManager {
   int? _prevVideoUs;
   int _stallCount = 0;
   final List<DateTime> _stallRecoveries = [];
+  int _lastDataUs = 0; // 最後一次收到 data channel 訊息（_videoClock）
+  VideoCounters? _prevDataVideo; // 資料中斷偵測用的上一筆影像統計（背景時也更新）
 
   void _startStats() {
     _statsTimer?.cancel();
@@ -325,6 +334,8 @@ class ConnectionManager {
     _pendingMsgs.clear();
     _coalesced = 0;
     _stallCount = 0;
+    _lastDataUs = _videoClock.elapsedMicroseconds; // 從連上開始算
+    _prevDataVideo = null;
     var tick = 0;
     final epoch = _connectEpoch;
     _statsTimer = Timer.periodic(_statsInterval, (_) async {
@@ -344,7 +355,11 @@ class ConnectionManager {
         if (epoch != _connectEpoch) return; // 期間已重連
         if (s != null && logNow) debugPrint('[opview] webrtc stats: $s');
         if (logNow) _logLatency(_transport.lastVideoCounters);
-        _checkVideoStall(_transport.lastVideoCounters);
+        final v = _transport.lastVideoCounters;
+        final prevV = _prevDataVideo;
+        _prevDataVideo = v;
+        _checkVideoStall(v);
+        if (epoch == _connectEpoch) _checkDataStall(prevV, v);
       } finally {
         _statsBusy = false;
       }
@@ -412,18 +427,37 @@ class ConnectionManager {
     if (_stallCount < _stallWindows) return;
     _stallCount = 0;
 
-    final cutoff = DateTime.now().subtract(_stallRecoveryWindow);
-    _stallRecoveries.removeWhere((t) => t.isBefore(cutoff));
-    if (_stallRecoveries.length >= _stallMaxRecoveries) {
-      debugPrint('[opview] video stalled, but already restarted $_stallMaxRecoveries times in '
-          '${_stallRecoveryWindow.inMinutes} min — not restarting again');
-      return;
-    }
-    _stallRecoveries.add(DateTime.now());
+    if (!_tryRecovery('video stalled')) return;
     _setStatus('video stalled (${fps.toStringAsFixed(1)} fps decoded) — restarting video stream');
     _teardown();
     _retryCount = 0;
     _connect();
+  }
+
+  /// 資料中斷偵測：見檔案開頭 _dataStallLimit 說明。背景執行也檢查（起步提醒靠資料）。
+  void _checkDataStall(VideoCounters? prev, VideoCounters? now) {
+    final silentUs = _videoClock.elapsedMicroseconds - _lastDataUs;
+    if (silentUs < _dataStallLimit.inMicroseconds) return;
+    // 影像也停了 → 是整條連線的問題，交給 WebRTC 斷線 / 影像卡住處理
+    if (prev == null || now == null || now.packets - prev.packets < _stallMinPackets) return;
+    if (!_tryRecovery('data channel silent ${(silentUs / 1e6).toStringAsFixed(0)}s while video flows')) return;
+    _setStatus('資料中斷 ${(silentUs / 1e6).toStringAsFixed(0)} 秒（影像正常）— 重新連線');
+    _teardown();
+    _retryCount = 0;
+    _connect();
+  }
+
+  /// 自動重建次數限制（影像卡住、資料中斷共用）：2 分鐘內最多 3 次；超過回傳 false
+  bool _tryRecovery(String why) {
+    final cutoff = DateTime.now().subtract(_stallRecoveryWindow);
+    _stallRecoveries.removeWhere((t) => t.isBefore(cutoff));
+    if (_stallRecoveries.length >= _stallMaxRecoveries) {
+      debugPrint('[opview] $why, but already restarted $_stallMaxRecoveries times in '
+          '${_stallRecoveryWindow.inMinutes} min — not restarting again');
+      return false;
+    }
+    _stallRecoveries.add(DateTime.now());
+    return true;
   }
 
   void _stopStats() {
@@ -448,6 +482,7 @@ class ConnectionManager {
         return; // clockSync / disconnect / connectionReplaced 都不是 cereal 資料
       }
 
+      _lastDataUs = _videoClock.elapsedMicroseconds;
       for (final m in _typeRe.allMatches(chunk)) {
         final t = m.group(1)!;
         _rxCounts[t] = (_rxCounts[t] ?? 0) + 1;

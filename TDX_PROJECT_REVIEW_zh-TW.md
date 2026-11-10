@@ -73,6 +73,8 @@ UIState.applyTdx()  →  直向 TDX 列 / 事件跑馬燈、橫向卡片右欄 /
 | F6 | `comma_experimental_api.dart` | 檔頭註解寫「開啟時一併寫 ExperimentalModeConfirmed」，與實作 / 端點文件（不代替使用者確認，未確認回 409）矛盾 | 改正註解 |
 | F7 | `model_renderer.dart` | 彩虹模式的 `clamp()` 結果與 `stops.add(0)` 依賴 Dart 的型別推斷 | 明確 `.toDouble()`、`0.0 / 1.0`，`step` 改用 `max(1, …)` |
 
+| F8 | `connection_manager.dart` | 實車 log（2026-11-10）：**影像照常、data channel 卻完全沒有訊息**，共 8 次、最長約 90 秒，畫面在動但車速 / 路徑停住，只能退出再進入。原本只有「影像卡住」偵測，沒有「資料中斷」偵測 | 影像封包照收（每 5 秒 ≥ 100）但超過 8 秒沒收到任何資料 → 自動重建連線；與影像卡住共用「2 分鐘最多 3 次」上限；背景執行也檢查 |
+
 新增測試：`test/dashboard_test.dart`（橫向無卡片仍顯示 TDX 膠囊）、`test/rainbow_path_test.dart`（直向 / 橫向 × 有 / 無前車，彩虹路徑繪製不丟例外）。
 
 ### 3.2 TDX 核心（`tdx_traffic_core.dart`）— 確認無誤的重點
@@ -174,6 +176,13 @@ UIState.applyTdx()  →  直向 TDX 列 / 事件跑馬燈、橫向卡片右欄 /
 3. **原版介面（classic）直向**只顯示 TDX 事件，不顯示 TDX 前方車速列（原版 HUD 沒有這個欄位）。
 
 ---
+
+## 4.5 實車 log 分析（opview-log-20261110-222726，OPPO CPH2641，iPhone 熱點）
+
+| 現象 | log 證據 | 原因判斷 | 處理 |
+|---|---|---|---|
+| 畫面在動、車速不動（長時間） | `rx 10s: (none)` 共 35 個視窗，分 8 段（16:45、18:50、19:46–19:48 約 90 秒、22:00…），同時 `webrtc stats` 顯示影像 20 fps、RTT 正常 | data channel 單獨中斷（影像走 RTP 不受影響）；每次都是使用者退出重進才恢復 | **F8 自動重連** |
+| 偶爾卡 1–3 秒 | 約 9% 的 10 秒視窗 data p95 > 1.5 s；同時影像 freeze 次數增加、RTT 升到 100–270 ms；之後一次湧入（`合併略過` 9–19 筆） | 網路端排隊 / 重傳（手機與 comma 都連 iPhone 熱點，封包經熱點轉兩次）；前景 / 背景差異不大（前景 9%、背景 7%），不是手機畫面運算造成 | 既有「資料延遲」提示；建議改用 comma 自身熱點或 5 GHz |
 
 ## 5. 已知限制
 

@@ -14,8 +14,10 @@ class TdxMarquee extends StatefulWidget {
   final double maxWidth;
   /// 捲動速度 (dp/s)
   final double speed;
+  /// 碰撞注意（近距離警示）：紅底白字、圖示閃爍，優先於 TDX 事件
+  final bool collision;
   const TdxMarquee({super.key, required this.text, this.fontSize = 17.25,  // 12.5 × 1.15 × 1.2
-    this.maxWidth = 420, this.speed = 50});
+    this.maxWidth = 420, this.speed = 50, this.collision = false});
 
   @override
   State<TdxMarquee> createState() => _TdxMarqueeState();
@@ -32,8 +34,10 @@ class _TdxMarqueeState extends State<TdxMarquee> with SingleTickerProviderStateM
   double get _icon => widget.fontSize + 1.5;
 
   // 文字用 white70（同儀表板次要文字），不用純白
-  TextStyle get _style => TextStyle(fontSize: widget.fontSize, color: Colors.white70,
-      fontWeight: FontWeight.w500, height: 1.2, letterSpacing: .2);
+  // 碰撞注意用純白粗體
+  TextStyle get _style => TextStyle(fontSize: widget.fontSize,
+      color: widget.collision ? Colors.white : Colors.white70,
+      fontWeight: widget.collision ? FontWeight.w800 : FontWeight.w500, height: 1.2, letterSpacing: .2);
 
   @override
   void didUpdateWidget(TdxMarquee old) {
@@ -102,12 +106,14 @@ class _TdxMarqueeState extends State<TdxMarquee> with SingleTickerProviderStateM
       padding: const EdgeInsets.symmetric(horizontal: _padH),
       // 底色 / 邊框沿用儀表板面板（0xDC0D171C + 低透明度 teal 邊框）
       decoration: BoxDecoration(
-        color: const Color(0xDC0D171C),
+        color: widget.collision ? const Color(0xF0C92231) : const Color(0xDC0D171C),
         borderRadius: BorderRadius.circular(widget.fontSize * 1.1),
-        border: Border.all(color: const Color(0x335DE3D4)),
+        border: Border.all(color: widget.collision ? Colors.white : const Color(0x335DE3D4),
+            width: widget.collision ? 2 : 1),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.warning_amber_rounded, color: tdxSlowColor.withAlpha(210), size: _icon),
+        Icon(widget.collision ? Icons.car_crash_rounded : Icons.warning_amber_rounded,
+            color: widget.collision ? Colors.white : tdxSlowColor.withAlpha(210), size: _icon),
         const SizedBox(width: _iconGap),
         body,
       ]),

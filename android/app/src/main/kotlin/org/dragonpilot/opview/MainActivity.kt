@@ -362,6 +362,26 @@ class MainActivity: FlutterActivity() {
         }
     }
 
+    // 近距離警示：單聲嗶（1.6 kHz、180 ms），與起步提醒的雙聲嗶（beep.wav）區隔；第一次使用時產生並預先載入
+    private var proximityClip: Clip? = null
+
+    private fun ensureProximityClip(): Clip? {
+        proximityClip?.let { return it }
+        val rate = 44100
+        val n = rate * 180 / 1000
+        val fade = rate * 6 / 1000.0
+        val data = java.nio.ByteBuffer.allocate(44 + n * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        data.put("RIFF".toByteArray(Charsets.US_ASCII)).putInt(36 + n * 2).put("WAVE".toByteArray(Charsets.US_ASCII))
+        data.put("fmt ".toByteArray(Charsets.US_ASCII)).putInt(16).putShort(1).putShort(1).putInt(rate)
+            .putInt(rate * 2).putShort(2).putShort(16)
+        data.put("data".toByteArray(Charsets.US_ASCII)).putInt(n * 2)
+        for (i in 0 until n) {
+            val env = minOf(1.0, i / fade, (n - 1 - i) / fade)
+            data.putShort((Math.sin(2.0 * Math.PI * 1600.0 * i / rate) * env * 0.85 * Short.MAX_VALUE).toInt().toShort())
+        }
+        return makeClip(data.array(), "近距離警示").also { proximityClip = it }
+    }
+
     /** 輸出裝置類型 → 中文 */
     private fun deviceName(type: Int?): String = when (type) {
         null -> "未知"
@@ -982,6 +1002,17 @@ class MainActivity: FlutterActivity() {
                         val err = beepAlert()
                         if (err == null) result.success("$wavErr → 程式產生的嗶嗶聲已播放；$vol")
                         else result.error("beep", "$wavErr；$err；$vol", null)
+                    }
+                }
+                // 近距離警示：單聲嗶（不受起步提醒的聲音設定影響）
+                "proximityBeep" -> {
+                    val clip = ensureProximityClip()
+                    if (clip != null && playClip(clip, "近距離警示") { beepAlert() }) {
+                        result.success("單聲嗶播放中；${mediaVolumeNote()}")
+                    } else {
+                        val err = beepAlert()
+                        if (err == null) result.success("改用程式產生的嗶嗶聲；${mediaVolumeNote()}")
+                        else result.error("beep", err, null)
                     }
                 }
                 "isInPip" -> result.success(

@@ -5,6 +5,7 @@
 // data-driven refresh: notifyListeners on modelV2 arrival.
 
 import 'package:opview/services/stop_go_alerts.dart';
+import 'package:opview/services/proximity_alert.dart';
 import 'package:flutter/foundation.dart';
 
 // -- constants --
@@ -127,6 +128,10 @@ class UIState extends ChangeNotifier {
   List<double> calibHeight = [];
 
   // radarState
+  /// modelV2.leadsV3[0] 在 t=0 的純視覺前車（近距離警示用）；comma 端沒送 leadsV3 時為 null
+  double? visionLeadX, visionLeadY, visionLeadProb;
+  bool visionLeadSeen = false; // 曾收到 leadsV3
+  bool _leadsV3Warned = false;
   Map<String, dynamic>? leadOne;
   Map<String, dynamic>? leadTwo;
 
@@ -164,6 +169,22 @@ class UIState extends ChangeNotifier {
     if (!_tdxAlive || _tdxEvents.isEmpty) return '';
     final loc = _tdxEvents.first.isCurrentSection ? '目前' : '前方';
     return '$loc: ${_tdxEvents.map((e) => e.description).join(' / ')}';
+  }
+
+  /// 近距離警示觸發中（低信心目標在 2–3 m 內）：事件列顯示「碰撞注意」，優先於 TDX 事件。
+  /// 斷線時不顯示。空字串 = 沒有。
+  String get collisionText {
+    if (!isConnected) return '';
+    final t = ProximityAlert.instance.active;
+    if (t == null) return '';
+    return '碰撞注意  前方 ${(t.dRel < 0 ? 0 : t.dRel).toStringAsFixed(1)} m';
+  }
+
+  /// 事件位置要顯示的文字與是否為碰撞警示（碰撞注意優先級最高，其次 TDX 事件）
+  ({String text, bool collision}) get eventBanner {
+    final c = collisionText;
+    if (c.isNotEmpty) return (text: c, collision: true);
+    return (text: isConnected ? tdxEventText : '', collision: false);
   }
 
   void applyTdx(Map<String, dynamic> data) {
@@ -312,7 +333,24 @@ class UIState extends ChangeNotifier {
     final target = allowThrottle ? 1.0 : 0.0;
     throttleBlend = throttleBlend + k * (target - throttleBlend);
 
+    // 純視覺前車（modelV2.leadsV3[0]，t=0）：comma 端精簡 modelV2 有帶 leadsV3 才有
+    final leads = data['leadsV3'];
+    final l0 = leads is List && leads.isNotEmpty && leads.first is Map ? leads.first as Map : null;
+    double? first(Object? v) => v is List && v.isNotEmpty && v.first is num ? (v.first as num).toDouble() : null;
+    visionLeadX = l0 == null ? null : first(l0['x']);
+    visionLeadY = l0 == null ? null : first(l0['y']);
+    visionLeadProb = l0 == null ? null : (l0['prob'] as num?)?.toDouble();
+    if (l0 != null) visionLeadSeen = true;
+    if (l0 == null && !visionLeadSeen && !_leadsV3Warned && ProximityAlert.instance.enabled) {
+      _leadsV3Warned = true;
+      debugPrint('[opview] 近距離警示：comma 端 modelV2 沒有 leadsV3（webrtcd 未更新），警示不會觸發');
+    }
+
     StopGoAlerts.instance.update(this); // 前車起步 / 綠燈起步 / 停等計時（20 Hz）
+    ProximityAlert.instance.update(ProximityInput(
+      vEgo: vEgo, leadX: visionLeadX, leadY: visionLeadY, leadProb: visionLeadProb,
+      pathX: pathX, pathY: pathY,
+    ));
     _notify();  // data-driven: render on modelV2 arrival
   }
 

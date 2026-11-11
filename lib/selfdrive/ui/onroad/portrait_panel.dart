@@ -108,7 +108,9 @@ class PortraitPanel extends StatelessWidget {
       final w = box.maxWidth;
       final modern = state.modernOverlay;
       final tdxSpeed = modern && !stale ? state.tdxNextSpeedDisplay : null;
-      final event = state.isConnected ? state.tdxEventText : '';
+      // 碰撞注意（近距離警示）優先於 TDX 事件，佔同一列
+      final banner = state.eventBanner;
+      final event = banner.text;
 
       // 卡片：內容高度（字級依此）＝ 寬度的 0.42 × 0.624 × 1.2（上限約 113），卡片實際高度 × cardBoxTrim；
       // 剩餘高度不夠時再一起縮（短螢幕不溢出）
@@ -168,6 +170,7 @@ class PortraitPanel extends StatelessWidget {
                   alignment: Alignment.centerLeft,
                   child: TdxMarquee(
                     text: event,
+                    collision: banner.collision,
                     maxWidth: w - 2 * pad,
                     fontSize: 17.25 * fontZoom,
                   ),

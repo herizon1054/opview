@@ -10,6 +10,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:opview/selfdrive/ui/ui_state.dart';
 import 'package:opview/common/transformations.dart';
+import 'package:opview/services/proximity_alert.dart';
 
 // -- constants (model_renderer.py:14-16) --
 
@@ -130,6 +131,50 @@ class ModelRendererPainter extends CustomPainter {
     _drawRoadEdges(canvas, roadEdgePolys);
     _drawPath(canvas, pathPoly, maxDist);
     _drawLeadIndicators(canvas, pathX);
+    final prox = ProximityAlert.instance.active;
+    if (prox != null) _drawProximityArrow(canvas, prox);
+  }
+
+  /// 近距離警示：低信心目標下方的大紅色向上箭頭＋距離，尖端指向目標底部；
+  /// 目標太近（投影在畫面下緣外）時夾在畫面下方。每 0.4 秒閃爍。
+  void _drawProximityArrow(Canvas canvas, ProximityTarget t) {
+    final r = contentRect;
+    final scale = (min(r.width, r.height) / 600).clamp(0.6, 2.0);
+    // 左右位置：投影目標地面點（不裁切），夾在畫面內
+    final tr = carSpaceTransform;
+    final z = _pathOffsetZ;
+    final w = tr[2][0] * t.x + tr[2][1] * t.y + tr[2][2] * z;
+    var cx = r.center.dx;
+    var tipY = r.bottom - 150 * scale;
+    if (w.abs() > 1e-6) {
+      cx = (tr[0][0] * t.x + tr[0][1] * t.y + tr[0][2] * z) / w;
+      tipY = min(tipY, (tr[1][0] * t.x + tr[1][1] * t.y + tr[1][2] * z) / w);
+    }
+    final aw = 74 * scale, ah = 92 * scale;
+    cx = cx.clamp(r.left + aw, r.right - aw).toDouble();
+    tipY = tipY.clamp(r.top + r.height * .45, r.bottom - ah - 34 * scale).toDouble();
+    final on = (DateTime.now().millisecondsSinceEpoch ~/ 400).isEven;
+    final path = Path()
+      ..moveTo(cx, tipY)
+      ..lineTo(cx + aw / 2, tipY + ah * .5)
+      ..lineTo(cx + aw * .2, tipY + ah * .5)
+      ..lineTo(cx + aw * .2, tipY + ah)
+      ..lineTo(cx - aw * .2, tipY + ah)
+      ..lineTo(cx - aw * .2, tipY + ah * .5)
+      ..lineTo(cx - aw / 2, tipY + ah * .5)
+      ..close();
+    canvas.drawPath(path, Paint()..color = on ? const Color(0xFFFF3B30) : const Color(0xB3FF3B30));
+    canvas.drawPath(path, Paint()..color = Colors.white..style = PaintingStyle.stroke..strokeWidth = 2.5 * scale);
+    final text = TextPainter(text: TextSpan(text: '低信心前車 ${t.dRel < 0 ? 0 : t.dRel.toStringAsFixed(1)} m',
+        style: TextStyle(color: Colors.white, fontSize: 16 * scale, fontWeight: FontWeight.w800)),
+        textDirection: TextDirection.ltr)..layout();
+    final origin = Offset((cx - text.width / 2).clamp(r.left + 4, r.right - text.width - 4).toDouble(),
+        tipY + ah + 6 * scale);
+    canvas.drawRRect(RRect.fromRectAndRadius(Rect.fromLTWH(origin.dx - 8 * scale, origin.dy - 3 * scale,
+        text.width + 16 * scale, text.height + 6 * scale), Radius.circular(8 * scale)),
+        Paint()..color = const Color(0xE6C92231));
+    text.paint(canvas, origin);
+    text.dispose();
   }
 
   // -- drawing --

@@ -338,15 +338,15 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
   // events.py 的 alert 不在這裡，維持 stock AlertRenderer（small / mid 底部橫幅、full 全螢幕）。
   Widget _tdxMarquee(double scale, double screenW) {
     final modern = widget.uiState.modernOverlay;
-    if (!widget.uiState.isConnected || widget.uiState.tdxEventText.isEmpty) {
-      return const SizedBox.shrink();
-    }
+    // 碰撞注意（近距離警示）優先於 TDX 事件，佔同一位置
+    final banner = widget.uiState.eventBanner;
+    if (banner.text.isEmpty) return const SizedBox.shrink();
     return Positioned(
       top: modern ? 12 : 300 * scale + 6,
       left: 16, right: 16,
       child: IgnorePointer(child: RepaintBoundary(
         // v20：字級 ×1.3（17.25 → 約 22.4），最寬放寬到畫面 70%（上限 560dp）
-        child: TdxMarquee(text: widget.uiState.tdxEventText, fontSize: 17.25 * 1.3,
+        child: TdxMarquee(text: banner.text, collision: banner.collision, fontSize: 17.25 * 1.3,
           maxWidth: screenW * .7 < 560 ? screenW * .7 : 560))));
   }
 
@@ -581,7 +581,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                 widget.uiState.status, widget.uiState.experimentalMode,
                 widget.uiState.alertSize, widget.uiState.alertText1, widget.uiState.leadDistance != null,
                 widget.uiState.tdxNextSpeedDisplay, widget.uiState.tdxCongestion,
-                widget.uiState.tdxEventText, widget.uiState.gearShifter,
+                widget.uiState.tdxEventText, widget.uiState.collisionText, widget.uiState.gearShifter,
                 widget.uiState.leftBlinker, widget.uiState.rightBlinker,
                 widget.settings?.lineNotify ?? false, ParkingConfig.instance.enabled,
                 widget.uiState.hideHudCard),

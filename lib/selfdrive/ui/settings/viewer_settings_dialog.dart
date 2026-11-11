@@ -143,6 +143,15 @@ class ViewerSettingsDialog extends StatelessWidget {
               '（需開啟其中一項偵測、聲音不是靜音）。通知列會顯示「opview 背景執行中」，可按「停止」結束；'
               '耗電與流量和前景相同。小米等手機請把 opview 的省電策略設為「無限制」。'),
             value: settings.backgroundRun, onChanged: settings.setBackgroundRun),
+          const Divider(),
+          SwitchListTile(contentPadding: EdgeInsets.zero,
+            secondary: const Icon(Icons.warning_amber_rounded, color: Color(0xFFFF3B30)),
+            title: const Text('近距離警示'),
+            subtitle: const Text('行進中（20–60 km/h）前方有目標但模型信心度只有 0.2 以上、未達 0.5（openpilot 不會當成前車），'
+              '在行駛路徑左右 0.9 公尺內、距車頭 2 公尺（20 km/h）～3 公尺（60 km/h）內，且連續 5 幀（約 0.25 秒）時，'
+              '道路畫面顯示紅色箭頭、事件位置顯示「碰撞注意」並嗶一聲（30 秒內只嗶一次；不受起步提醒聲音設定影響）｜直向、橫向。'
+              '需要 comma 端 webrtcd 已更新（送出 leadsV3）；僅供參考，不會控制車輛。'),
+            value: settings.proximityAlert, onChanged: settings.setProximityAlert),
           if (system.brightnessSupported.value)
           SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('亮度跟隨系統'),
             value: settings.brightness == null,

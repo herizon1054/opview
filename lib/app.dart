@@ -15,6 +15,7 @@ import 'package:opview/selfdrive/ui/home/home_page.dart';
 import 'package:opview/services/connection_manager.dart';
 import 'package:opview/services/viewer_settings.dart';
 import 'package:opview/services/stop_go_alerts.dart';
+import 'package:opview/services/proximity_alert.dart';
 import 'package:opview/services/tdx/tdx_traffic_service.dart';
 import 'package:opview/services/line_notifications.dart';
 import 'package:opview/services/alert_sound.dart';
@@ -38,6 +39,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
   bool _streamPaused = false;
   bool? _pipOffered;
   StreamSubscription<StopGoKind>? _stopGoSub;
+  StreamSubscription<ProximityTarget>? _proximitySub;
   int _lifecycleEpoch = 0;
   AppLifecycleState _lifecycle = AppLifecycleState.resumed;
   bool _inBackground = false; // 背景執行中（保持連線、播放起步語音）
@@ -64,6 +66,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     _uiState.modernOverlay = _settings.layout != ViewerLayout.classic;
     _uiState.rainbowPath = _settings.rainbowPath;
     _uiState.hideHudCard = _settings.hideHudCard;
+    ProximityAlert.instance.configure(enabled: _settings.proximityAlert);
     StopGoAlerts.instance.configure(greenLight: _settings.greenLightAlert,
         leadDepart: _settings.leadDepartAlert, standstillTimer: _settings.standstillTimer);
     _syncBackgroundWish();
@@ -177,6 +180,8 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     _connectionManager.start();
     // 前車起步 / 綠燈起步：聲音在直向、橫向都播放
     _stopGoSub = StopGoAlerts.instance.events.listen((k) => playStopGoSound(k, _settings.alertSound));
+    // 近距離警示：一律嗶一聲（不受起步提醒的聲音設定影響）
+    _proximitySub = ProximityAlert.instance.events.listen((_) => playProximityBeep());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) ParkingStartup.instance.start();
     });
@@ -185,6 +190,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     _stopGoSub?.cancel();
+    _proximitySub?.cancel();
     system.setBackgroundKeepAlive(false);
     WidgetsBinding.instance.removeObserver(this);
     ParkingStartup.instance.stop();

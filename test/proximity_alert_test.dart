@@ -98,7 +98,6 @@ void main() {
     expect(x.fired, isEmpty);
     x.run(3, (i) => _in(x: i.isEven ? 1.6 : 3.5)); // 車頭 0.08 / 1.98 m，距離每幀跳 1.9 m 以內 → 仍算穩定
     expect(x.fired.length, 1);
-    expect(x.fired, isEmpty);
   });
 
   test('approaching car stays stable → fires', () {

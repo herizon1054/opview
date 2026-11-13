@@ -114,7 +114,8 @@ class ProximityAlert extends ChangeNotifier {
   }
 
   /// 每次觸發一次（嗶一聲）
-  final StreamController<ProximityTarget> _events = StreamController<ProximityTarget>.broadcast();
+  // sync：觸發的那一幀就送出（測試可同步檢查；app.dart 收到後只是呼叫播放嗶聲）
+  final StreamController<ProximityTarget> _events = StreamController<ProximityTarget>.broadcast(sync: true);
   Stream<ProximityTarget> get events => _events.stream;
 
   int _count = 0; // 條件連續成立的幀數

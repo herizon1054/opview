@@ -102,7 +102,8 @@ void main() {
     await tester.pump(const Duration(seconds: 16));
   });
 
-  testWidgets('EXP badge on the card in experimental mode; LINE gets four lines beside parking', (tester) async {
+  // 2026-11-12 版面統一：卡片角落的 EXP 拿掉（實驗模式看道路畫面上的圖示），卡片內不再有 EXP
+  testWidgets('no EXP on the card in experimental mode; LINE gets four lines beside parking', (tester) async {
     ParkingConfig.instance.enabled = true;
     final state = UIState()..experimentalMode = true;
     LineNotifications.instance.add('小明',
@@ -112,11 +113,8 @@ void main() {
         child: PortraitPanel(state: state, lineEnabled: true))))));
     await tester.pump();
     expect(tester.takeException(), isNull);
-    expect(find.text('EXP'), findsOneWidget);
-    // EXP 在卡片範圍內（不另外佔高度）
-    final card = tester.getRect(find.byType(DashboardCard));
-    final exp = tester.getRect(find.text('EXP'));
-    expect(card.contains(exp.topLeft) && card.contains(exp.bottomRight), isTrue);
+    expect(find.text('EXP'), findsNothing);
+    expect(find.byType(DashboardCard), findsOneWidget);
     // LINE：至少四行（字級 14 × 1.3、行高 1.3）
     final line = tester.getRect(find.textContaining('第一行'));
     expect(line.height, greaterThanOrEqualTo(14 * 1.3 * 1.3 * 4 - 1));

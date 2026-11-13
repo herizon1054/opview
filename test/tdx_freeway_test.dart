@@ -142,7 +142,7 @@ void main() {
     };
 
     test('queue / lanes text, drop banner priority and one beep per 3 minutes', () async {
-      final s = createMockUIState(vEgo: 90 / 3.6);
+      final s = createMockUIState(vEgo: 90 / 3.6)..modernOverlay = true; // 直向路況卡只在儀表介面
       final beeps = <String>[];
       final sub = s.tdxDropEvents.listen(beeps.add);
       s.applyTdx(data());

@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:opview/selfdrive/ui/onroad/augmented_road_view.dart';
+import 'package:opview/selfdrive/ui/onroad/freeway_info.dart';
+import 'package:opview/selfdrive/ui/onroad/tdx_marquee.dart';
 import 'package:opview/services/tdx/tdx_traffic_core.dart';
 import 'package:opview/services/viewer_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -146,7 +148,10 @@ void main() {
       s.applyTdx(data());
       expect(s.tdxQueueText, '回堵 1.5公里起 3.5公里｜均速 28');
       expect(s.tdxLanes!.speeds, [92, 85, 38]);
-      expect(s.eventBanner, (text: '車速驟降  前方 1.5公里 降到 25 km/h', collision: false, warn: true));
+      // 2026-11-13 格式；直向的車速驟降在路況卡，警示列只剩 TDX 事件
+      expect(s.tdxDropText, '車速驟降 前方1.5公里 降至25km');
+      expect(s.eventBanner, (text: '車速驟降 前方1.5公里 降至25km', collision: false, warn: true));
+      expect(s.eventBannerFor(portrait: true), (text: '', collision: false, warn: false)); // 直向：都在路況卡
       s.applyTdx(data(qd: 1200));
       await Future<void>.delayed(Duration.zero);
       expect(beeps.length, 1); // 持續中不重複
@@ -169,6 +174,7 @@ void main() {
       // 已在回堵中
       s.applyTdx({...data(qd: 0), 'queue': {'d': 0.0, 'len': 6000.0, 'avg': 20, 'min': 15, 'open': true}});
       expect(s.tdxQueueText, '回堵中 還有 6.0公里以上｜均速 20');
+      expect(s.tdxDropText, '車速驟降 已進入回堵 降至15km');
       s.resetTdx();
       expect(s.tdxQueueText, '');
       expect(s.tdxLanes, isNull);
@@ -203,8 +209,19 @@ void main() {
       await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
           home: AugmentedRoadView(uiState: state, settings: settings)));
       await tester.pump(const Duration(milliseconds: 50));
-      expect(find.textContaining('車速驟降'), findsWidgets);
-      expect(find.textContaining('回堵 1.5公里起 3.5公里'), findsWidgets);
+      final inCard = find.descendant(of: find.byType(TdxRouteCard), matching: find.textContaining('車速驟降'));
+      final inBanner = find.descendant(of: find.byType(TdxMarquee), matching: find.textContaining('車速驟降'));
+      if (name == 'portrait') {
+        // 直向：車速驟降取代路況卡的回堵那一行，上方警示列不顯示
+        expect(inCard, findsOneWidget);
+        expect(inBanner, findsNothing);
+        expect(find.textContaining('回堵 1.5公里起'), findsNothing);
+      } else {
+        // 橫向：上方警示列（黃），路況卡照常顯示回堵
+        expect(inBanner, findsWidgets);
+        expect(inCard, findsNothing);
+        expect(find.textContaining('回堵 1.5公里起 3.5公里'), findsWidgets);
+      }
       expect(find.text('92'), findsWidgets);
       expect(find.text('38'), findsWidgets);
       expect(tester.takeException(), isNull);

@@ -71,6 +71,15 @@ class ViewerSettingsDialog extends StatelessWidget {
             subtitle: Text('前方車速與路況事件跑馬燈'
                 '${settings.tdx ? '\n狀態：${TdxTrafficService.instance.status.value}' : ''}'),
             value: settings.tdx, onChanged: settings.setTdx),
+          if (settings.tdx)
+            SwitchListTile(contentPadding: const EdgeInsets.only(left: 40),
+              secondary: const Icon(Icons.trending_down_rounded, color: Color(0xFFF2B731)),
+              title: const Text('國道車速驟降嗶聲'),
+              subtitle: const Text('國道上前方 2 公里內開始回堵（低於 40 km/h），且比本車慢 40 km/h 以上時，'
+                '顯示黃色「車速驟降 前方1.5公里 降至25km」並嗶一聲（3 分鐘內不重複；直向在路況卡、橫向在上方警示列）。'
+                '關閉只取消聲音，畫面照常顯示。'
+                '國道另顯示回堵長度與前方偵測器的各車道車速｜直向、橫向。'),
+              value: settings.tdxDropBeep, onChanged: settings.setTdxDropBeep),
           ListTile(contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.local_parking), title: const Text('附近停車場與空位'),
             subtitle: Text(ParkingConfig.instance.enabled

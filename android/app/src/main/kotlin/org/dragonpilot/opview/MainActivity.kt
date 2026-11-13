@@ -367,8 +367,20 @@ class MainActivity: FlutterActivity() {
 
     private fun ensureProximityClip(): Clip? {
         proximityClip?.let { return it }
+        return makeClip(toneWav(1600.0, 180), "近距離警示").also { proximityClip = it }
+    }
+
+    /** 國道車速驟降：單聲嗶，1.0 kHz、150 ms（比近距離警示的 1.6 kHz 低，聽得出差別） */
+    private var tdxDropClip: Clip? = null
+    private fun ensureTdxDropClip(): Clip? {
+        tdxDropClip?.let { return it }
+        return makeClip(toneWav(1000.0, 150), "國道車速驟降").also { tdxDropClip = it }
+    }
+
+    /** 單一正弦波 WAV（16-bit mono 44.1 kHz，頭尾 6 ms 淡入淡出） */
+    private fun toneWav(freq: Double, ms: Int): ByteArray {
         val rate = 44100
-        val n = rate * 180 / 1000
+        val n = rate * ms / 1000
         val fade = rate * 6 / 1000.0
         val data = java.nio.ByteBuffer.allocate(44 + n * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN)
         data.put("RIFF".toByteArray(Charsets.US_ASCII)).putInt(36 + n * 2).put("WAVE".toByteArray(Charsets.US_ASCII))
@@ -377,9 +389,9 @@ class MainActivity: FlutterActivity() {
         data.put("data".toByteArray(Charsets.US_ASCII)).putInt(n * 2)
         for (i in 0 until n) {
             val env = minOf(1.0, i / fade, (n - 1 - i) / fade)
-            data.putShort((Math.sin(2.0 * Math.PI * 1600.0 * i / rate) * env * 0.85 * Short.MAX_VALUE).toInt().toShort())
+            data.putShort((Math.sin(2.0 * Math.PI * freq * i / rate) * env * 0.85 * Short.MAX_VALUE).toInt().toShort())
         }
-        return makeClip(data.array(), "近距離警示").also { proximityClip = it }
+        return data.array()
     }
 
     /** 輸出裝置類型 → 中文 */
@@ -1008,6 +1020,16 @@ class MainActivity: FlutterActivity() {
                 "proximityBeep" -> {
                     val clip = ensureProximityClip()
                     if (clip != null && playClip(clip, "近距離警示") { beepAlert() }) {
+                        result.success("單聲嗶播放中；${mediaVolumeNote()}")
+                    } else {
+                        val err = beepAlert()
+                        if (err == null) result.success("改用程式產生的嗶嗶聲；${mediaVolumeNote()}")
+                        else result.error("beep", err, null)
+                    }
+                }
+                "tdxDropBeep" -> {
+                    val clip = ensureTdxDropClip()
+                    if (clip != null && playClip(clip, "國道車速驟降") { beepAlert() }) {
                         result.success("單聲嗶播放中；${mediaVolumeNote()}")
                     } else {
                         val err = beepAlert()

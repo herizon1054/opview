@@ -1,6 +1,7 @@
 // 碰撞注意：近距離警示觸發時，事件位置（直向事件列 / 橫向上方跑馬燈）顯示「碰撞注意」，優先於 TDX 事件
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:opview/selfdrive/ui/onroad/freeway_info.dart';
 import 'package:opview/selfdrive/ui/onroad/augmented_road_view.dart';
 import 'package:opview/services/proximity_alert.dart';
 import 'package:opview/services/viewer_settings.dart';
@@ -26,7 +27,7 @@ void main() {
     final s = createMockUIState()
       ..applyTdx({'nextSpeed': 62, 'congestion': 'smooth',
         'events': [{'description': '施工 外側車道', 'isCurrentSection': true}]});
-    expect(s.eventBanner, (text: '目前: 施工 外側車道', collision: false));
+    expect(s.eventBanner, (text: '目前: 施工 外側車道', collision: false, warn: false));
     _trigger();
     expect(s.eventBanner.collision, isTrue);
     expect(s.eventBanner.text, '碰撞注意  前方 1.5 m');
@@ -56,7 +57,13 @@ void main() {
       await tester.pumpWidget(app());
       await tester.pump(const Duration(milliseconds: 50));
       expect(find.textContaining('碰撞注意'), findsWidgets);
-      expect(find.textContaining('施工 外側車道'), findsNothing);
+      if (name == 'portrait') {
+        // 2026-11-13：直向 TDX 事件在路況卡裡，碰撞注意在道路畫面上方，兩者同時顯示
+        expect(find.descendant(of: find.byType(TdxRouteCard), matching: find.textContaining('施工 外側車道')),
+            findsOneWidget);
+      } else {
+        expect(find.textContaining('施工 外側車道'), findsNothing);
+      }
       expect(tester.takeException(), isNull);
 
       await tester.pumpWidget(const SizedBox.shrink());

@@ -6,7 +6,9 @@
 
 import 'package:opview/services/stop_go_alerts.dart';
 import 'package:opview/services/proximity_alert.dart';
+import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:opview/services/tdx/tdx_traffic_core.dart' show tdxDistText, tdxDropAheadM, tdxDropDeltaKph;
 
 // -- constants --
 
@@ -146,6 +148,9 @@ class UIState extends ChangeNotifier {
   int _tdxNextSpeedRaw = -1;      // km/h，-1 = 無資料
   String tdxCongestion = 'unknown'; // unknown / smooth / slow / congested
   final List<({String description, bool isCurrentSection})> _tdxEvents = [];
+  // 國道擴充（2026-11-12）：回堵、各車道車速（tdxReport 的 queue / lanes）
+  ({double d, double len, int avg, int min, bool open})? _tdxQueue;
+  ({double d, List<int> speeds})? _tdxLanes;
 
   // 手機端顯示開關（顯示設定的 TDX 開關）；關閉時服務也會停止抓取
   bool tdxEnabled = true;
@@ -180,11 +185,66 @@ class UIState extends ChangeNotifier {
     return '碰撞注意  前方 ${(t.dRel < 0 ? 0 : t.dRel).toStringAsFixed(1)} m';
   }
 
-  /// 事件位置要顯示的文字與是否為碰撞警示（碰撞注意優先級最高，其次 TDX 事件）
-  ({String text, bool collision}) get eventBanner {
+  /// 事件位置要顯示的文字與樣式：碰撞注意（紅）> 國道車速驟降（黃）> TDX 事件
+  ({String text, bool collision, bool warn}) get eventBanner => eventBannerFor(portrait: false);
+
+  /// [portrait]：直向儀表介面的 TDX 事件、車速驟降都在路況卡裡（2026-11-13，避免資訊過多），
+  /// 道路畫面上方的警示列只剩碰撞注意。直向原版介面沒有路況卡，維持和橫向一樣。
+  ({String text, bool collision, bool warn}) eventBannerFor({required bool portrait}) {
     final c = collisionText;
-    if (c.isNotEmpty) return (text: c, collision: true);
-    return (text: isConnected ? tdxEventText : '', collision: false);
+    if (c.isNotEmpty) return (text: c, collision: true, warn: false);
+    if (portrait && modernOverlay) return (text: '', collision: false, warn: false);
+    final d = tdxDropText;
+    if (d.isNotEmpty) return (text: d, collision: false, warn: true);
+    return (text: isConnected ? tdxEventText : '', collision: false, warn: false);
+  }
+
+  String _spd(int kph) => '${isMetric ? kph : (kph * kmToMile).round()}';
+
+  /// 國道回堵：「回堵 1.2公里起 3.5公里｜均速 25」/「回堵中 還有 3.5公里以上｜均速 25」，沒有為空字串
+  String get tdxQueueText {
+    final q = _tdxAlive ? _tdxQueue : null;
+    if (q == null) return '';
+    final len = '${tdxDistText(q.len)}${q.open ? '以上' : ''}';
+    final avg = '均速 ${_spd(q.avg)}';
+    return q.d < 50 ? '回堵中 還有 $len｜$avg' : '回堵 ${tdxDistText(q.d)}起 $len｜$avg';
+  }
+
+  /// 前方偵測器各車道車速（目前單位，依 LaneID 由內而外），沒有為 null
+  ({double d, List<int> speeds})? get tdxLanes {
+    final l = _tdxAlive ? _tdxLanes : null;
+    if (l == null) return null;
+    return (d: l.d, speeds: [for (final v in l.speeds) isMetric ? v : (v * kmToMile).round()]);
+  }
+
+  /// 國道車速驟降：回堵起點在前方 2 公里內，且本車比回堵最慢路段快 40 km/h 以上。沒有為空字串。
+  String get tdxDropText {
+    final q = _tdxAlive && isConnected ? _tdxQueue : null;
+    if (q == null || q.d > tdxDropAheadM) return '';
+    if (vEgo * 3.6 - q.min < tdxDropDeltaKph) return '';
+    // 格式（2026-11-13）：「車速驟降 前方1.5公里 降至25km」
+    final unit = isMetric ? 'km' : 'mph';
+    return q.d < 50 ? '車速驟降 已進入回堵 降至${_spd(q.min)}$unit'
+        : '車速驟降 前方${tdxDistText(q.d)} 降至${_spd(q.min)}$unit';
+  }
+
+  /// 車速驟降開始時發出一次（app.dart 播單聲嗶）；同一段回堵 tdxDropBeepCooldown 內不重複
+  static const tdxDropBeepCooldown = Duration(minutes: 3);
+  final _tdxDropEvents = StreamController<String>.broadcast();
+  Stream<String> get tdxDropEvents => _tdxDropEvents.stream;
+  bool _tdxDropOn = false;
+  DateTime? _tdxDropBeepAt;
+
+  void _checkTdxDrop(DateTime now) {
+    final t = tdxDropText;
+    final on = t.isNotEmpty;
+    if (on && !_tdxDropOn &&
+        (_tdxDropBeepAt == null || now.difference(_tdxDropBeepAt!) >= tdxDropBeepCooldown)) {
+      _tdxDropBeepAt = now;
+      debugPrint('[tdx] $t（本車 ${(vEgo * 3.6).round()} km/h）');
+      _tdxDropEvents.add(t);
+    }
+    _tdxDropOn = on;
   }
 
   void applyTdx(Map<String, dynamic> data) {
@@ -206,6 +266,16 @@ class UIState extends ChangeNotifier {
         _tdxEvents.add((description: desc, isCurrentSection: e['isCurrentSection'] == true));
       }
     }
+    final q = data['queue'];
+    _tdxQueue = q is Map && q['d'] is num && q['len'] is num && q['avg'] is num && q['min'] is num
+        ? (d: (q['d'] as num).toDouble(), len: (q['len'] as num).toDouble(), avg: (q['avg'] as num).toInt(),
+           min: (q['min'] as num).toInt(), open: q['open'] == true)
+        : null;
+    final l = data['lanes'];
+    _tdxLanes = l is Map && l['d'] is num && l['speeds'] is List && (l['speeds'] as List).isNotEmpty
+        ? (d: (l['d'] as num).toDouble(), speeds: [for (final v in l['speeds'] as List) if (v is num) v.toInt()])
+        : null;
+    _checkTdxDrop(lastTdxAt!);
     // no notify — picked up on next modelV2（未連線時畫面本來就不顯示 TDX）
   }
 
@@ -215,6 +285,9 @@ class UIState extends ChangeNotifier {
     _tdxNextSpeedRaw = -1;
     tdxCongestion = 'unknown';
     _tdxEvents.clear();
+    _tdxQueue = null;
+    _tdxLanes = null;
+    _tdxDropOn = false;
   }
 
   static const _tdxCongestionNames = ['unknown', 'smooth', 'slow', 'congested'];

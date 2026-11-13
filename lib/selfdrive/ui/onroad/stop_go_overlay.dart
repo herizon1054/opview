@@ -24,7 +24,9 @@ import 'alert_renderer.dart' show alertBannerRect;
 class StopGoOverlay extends StatefulWidget {
   final UIState state;
   final double screenH;
-  const StopGoOverlay({super.key, required this.state, required this.screenH});
+  /// 圓的上緣至少在這裡（橫向右上角有實驗模式圖示時往下讓位）
+  final double minTop;
+  const StopGoOverlay({super.key, required this.state, required this.screenH, this.minTop = 0});
   @override
   State<StopGoOverlay> createState() => _StopGoOverlayState();
 }
@@ -77,7 +79,10 @@ class _StopGoOverlayState extends State<StopGoOverlay> {
   (double, double, double)? _place(BuildContext context, Size size, double rDefault, Rect? bannerGlobal) {
     const gap = 8.0, right = 12.0, rMin = 28.0;
     final portrait = MediaQuery.orientationOf(context) == Orientation.portrait;
-    final top = portrait ? 8.0 : 48.0; // 橫向避開上方 TDX 跑馬燈與全螢幕叫回按鈕
+    // 上方警示列（直向、橫向都在道路畫面上方置中）出現時往下讓位；橫向另避開全螢幕叫回按鈕
+    final bannerOn = widget.state.eventBannerFor(portrait: portrait).text.isNotEmpty;
+    final top = math.max(widget.minTop,
+        portrait ? (bannerOn ? 8.0 + 16 * 2.2 + 6 : 8.0) : (bannerOn ? 12 + 17.25 * 1.3 * 2.2 + 6 : 48.0));
     var r = math.min(rDefault, (size.height - top - gap) / 2);
     if (bannerGlobal != null) {
       final me = context.findRenderObject();

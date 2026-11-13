@@ -14,6 +14,7 @@ import 'portrait_panel.dart';
 import 'compact_hud.dart';
 import 'throttled_hud.dart';
 import 'tdx_marquee.dart';
+import 'freeway_info.dart';
 import 'stop_go_overlay.dart';
 import 'experimental_badge.dart';
 import 'package:opview/services/stop_go_alerts.dart';
@@ -336,18 +337,33 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
   // TDX 路況事件：畫面上方置中小膠囊，最寬 60% 畫面寬（上限 420dp），超過才捲動。
   // 原版介面放在 header（車速 / MAX 框）下方。
   // events.py 的 alert 不在這裡，維持 stock AlertRenderer（small / mid 底部橫幅、full 全螢幕）。
-  Widget _tdxMarquee(double scale, double screenW) {
+  // 2026-11-12 版面統一：警示列直向、橫向都疊在道路畫面上方置中（直向原本在下方資訊區）。
+  // 碰撞注意（紅）> 車速驟降（黃）> TDX 事件；國道資訊改在路況卡（_routeCard / PortraitPanel）。
+  Widget _tdxMarquee(double scale, double screenW, bool portrait) {
     final modern = widget.uiState.modernOverlay;
-    // 碰撞注意（近距離警示）優先於 TDX 事件，佔同一位置
-    final banner = widget.uiState.eventBanner;
+    final banner = widget.uiState.eventBannerFor(portrait: portrait);
     if (banner.text.isEmpty) return const SizedBox.shrink();
+    // 橫向：v20 字級 ×1.3（約 22.4），最寬畫面 70%（上限 560dp）；直向影像只有約 244 dp 高，字級 16、最寬扣左右邊距
+    final maxW = portrait ? screenW - 24 : (screenW * .7 < 560 ? screenW * .7 : 560.0);
     return Positioned(
-      top: modern ? 12 : 300 * scale + 6,
-      left: 16, right: 16,
+      top: modern ? (portrait ? 8 : 12) : 300 * scale + 6,
+      left: 12, right: 12,
       child: IgnorePointer(child: RepaintBoundary(
-        // v20：字級 ×1.3（17.25 → 約 22.4），最寬放寬到畫面 70%（上限 560dp）
-        child: TdxMarquee(text: banner.text, collision: banner.collision, fontSize: 17.25 * 1.3,
-          maxWidth: screenW * .7 < 560 ? screenW * .7 : 560))));
+        child: TdxMarquee(text: banner.text, collision: banner.collision, warn: banner.warn,
+          fontSize: portrait ? 16 : 17.25 * 1.3, maxWidth: maxW))));
+  }
+
+  /// 橫向右上角第一個元件的上緣：全螢幕時讓給叫回按鈕（上下內距 10 + 按鈕 48）
+  double get _rightTop => _showRail ? 12 : 66;
+
+  /// 橫向警示列下緣（路況卡從這裡往下排，不會被警示列蓋到）
+  static const _landscapeBannerBottom = 12 + 17.25 * 1.3 * 2.2;
+
+  /// 橫向路況卡：左上角、opview 標題與警示列下方（直向在 PortraitPanel 卡片下方，同一個元件）
+  Widget _routeCard(double screenW) {
+    if (!TdxRouteCard.visible(widget.uiState)) return const SizedBox.shrink();
+    return Positioned(top: _landscapeBannerBottom + 8, left: 14, width: min(270.0, screenW * .36),
+      child: IgnorePointer(child: RepaintBoundary(child: TdxRouteCard(state: widget.uiState))));
   }
 
   Widget _details() => Positioned(top: 50, bottom: 20, right: 16,
@@ -393,12 +409,16 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
         // HUD / 警示 / 邊框依「短邊」縮放：橫向 = 高（與原本相同），直向 = 寬（避免直向時被放大到超出寬度）
         final scale = min(screenW, screenH) / 1080.0;
         final borderSize = (widget.pip || widget.uiState.modernOverlay ? 3 : uiBorderSize) * scale;
-        // 實驗模式圖示：道路畫面左側中上（圖示中心在畫面高度 35%），左緣 12；
-        // 直向 34 dp，橫向依短邊縮放（36~56 dp）。左側中上沒有其他元件（opview 標題在左上、狀態徽章在左下），
-        // 右上角的起步提醒圓圈、車輛資訊框、全螢幕叫回按鈕都不用讓位
+        // 實驗模式圖示（直向、橫向唯一的實驗模式標示，openpilot HUD 圖案）：直向 34 dp，橫向依短邊縮放（36~56 dp）。
+        //   直向：道路畫面左側中上（圖示中心在畫面高度 35%），左緣 12
+        //   橫向：右上角（同 openpilot）。全螢幕時右上角是叫回按鈕 → 排在按鈕下方；
+        //   起步提醒圈、車輛資訊框再往下排（_rightStackTop），互不重疊
         final expShown = !widget.pip && !_stale && widget.uiState.experimentalMode;
         final expSize = portrait ? 34.0 : (88 * scale).clamp(36.0, 56.0).toDouble();
-        final expTop = (screenH - 2 * borderSize) * .35 - expSize / 2;
+        final hudH = screenH - 2 * borderSize;
+        final expTop = portrait ? hudH * .35 - expSize / 2 : _rightTop;
+        // 橫向右側欄位（起步提醒圈、車輛資訊框）從這裡往下排
+        final rightBelow = !portrait && expShown ? _rightTop + expSize + 8 : null;
 
         // recompute transform only when inputs change
         final transform = _getTransform(screenW, screenH);
@@ -457,12 +477,13 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                                 if (!portrait) DashboardHud(state: widget.uiState, stale: _stale),
                               ] else if (!_stale) HudRenderer(uiState: widget.uiState, scale: scale),
                               if (widget.settings?.layout == ViewerLayout.detailed)
-                                VehicleDetails(state: widget.uiState, stale: _stale),
+                                VehicleDetails(state: widget.uiState, stale: _stale, top: rightBelow ?? 12),
                             ]),
                           ),
                         ],
                         if (!widget.pip && _showDetails && widget.uiState.alertSize == 0) _details(),
-                        if (!widget.pip && !portrait) _tdxMarquee(scale, screenW),
+                        if (!widget.pip) _tdxMarquee(scale, screenW, portrait),
+                        if (!widget.pip && !portrait && widget.uiState.modernOverlay && !_stale) _routeCard(screenW),
                         // comma 事件（接管方向盤等 alert）：直向、橫向都貼在道路畫面底部。
                         // 直向影像只有約 244 dp 高，依短邊算的 scale 太小 → 改用寬度 / 1500（字約 16 sp），
                         // 且高度依字級決定（不用 stock 固定高度，避免蓋掉太多道路畫面）
@@ -472,10 +493,12 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                         // 前車起步 / 綠燈起步 / 停等計時：直向、橫向都顯示在道路畫面右側（聲音另由 app.dart 播放）
                         if (!widget.pip && !_stale && (StopGoAlerts.instance.greenLightEnabled ||
                             StopGoAlerts.instance.leadDepartEnabled || StopGoAlerts.instance.standstillTimerEnabled))
-                          Positioned.fill(child: StopGoOverlay(state: widget.uiState, screenH: screenH)),
+                          Positioned.fill(child: StopGoOverlay(state: widget.uiState, screenH: screenH,
+                              minTop: rightBelow ?? 0)),
                         // 實驗模式圖示：道路畫面左側中上
                         if (expShown)
-                          Positioned(top: expTop, left: 12, child: ExperimentalBadge(size: expSize)),
+                          Positioned(top: expTop, left: portrait ? 12 : null, right: portrait ? null : 12,
+                            child: ExperimentalBadge(size: expSize)),
                       ],
                     ),
                   ),
@@ -582,6 +605,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                 widget.uiState.alertSize, widget.uiState.alertText1, widget.uiState.leadDistance != null,
                 widget.uiState.tdxNextSpeedDisplay, widget.uiState.tdxCongestion,
                 widget.uiState.tdxEventText, widget.uiState.collisionText, widget.uiState.gearShifter,
+                widget.uiState.tdxDropText, freewayInfoKey(widget.uiState),
                 widget.uiState.leftBlinker, widget.uiState.rightBlinker,
                 widget.settings?.lineNotify ?? false, ParkingConfig.instance.enabled,
                 widget.uiState.hideHudCard),

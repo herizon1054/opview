@@ -2,14 +2,15 @@
 //
 //   ┌ ◀ 儀表卡片：MAX ｜ 車速 ｜ 前車距離 / 車頭時距 ▶  ┐  ← 兩側為方向燈箭頭；v21 卡片變矮、字級不變
 //   │   （v21 移除上方徽章列：ENGAGED / 資料中斷 / EXPERIMENTAL / opview）│
-//   │ TDX 列：前方車速（依壅塞分級上色）＋ 路況分級     │  ← 有 TDX 資料才顯示
-//   │ TDX 事件（施工、事故…，過長自動捲動）            │  ← 有事件才顯示（優先於 LINE）
+//   │ 路況卡：前方車速＋國道回堵＋車道車速（TdxRouteCard）│  ← 有 TDX 資料才顯示（橫向同一張卡，在左上角）
 //   │ LINE 通知（每則 30 秒）                          │  ← 有訊息才出現
 //   │ 附近停車場與空位（按鈕與結果）                    │  ← 與 LINE 共用剩餘高度，任一方消失另一方補滿；
 //   │                                                  │     沒查詢時縮成精簡版，查詢中 / 有結果時 LINE 只留兩行
 //   └ （comma 事件 / alert 改顯示在道路畫面底部，見 AugmentedRoadView）┘
 //
-// 原版介面（modernOverlay = false）：原版 HUD 仍疊在影像上，本區只放 TDX 事件與警示。
+// 2026-11-12 版面統一：警示列（碰撞注意 / 車速驟降 / TDX 事件）改疊在道路畫面上方，與橫向相同，
+// 不再佔這裡的版面（出現 / 消失不會推動卡片）。
+// 原版介面（modernOverlay = false）：原版 HUD 仍疊在影像上，本區只有 LINE / 停車。
 
 import 'dart:math' as math;
 
@@ -17,7 +18,7 @@ import 'package:flutter/material.dart';
 
 import '../ui_state.dart';
 import 'dashboard_hud.dart';
-import 'tdx_marquee.dart';
+import 'freeway_info.dart';
 import 'parking_panel.dart';
 import 'package:opview/services/line_notifications.dart';
 import 'package:opview/services/parking/parking_config.dart';
@@ -48,9 +49,7 @@ class PortraitPanel extends StatelessWidget {
   static const double parkingMinH = 100;
 
   static const double pad = 16, gap = 12;
-  static const double badgeH = 26,
-      tdxRowH = 56 * fontZoom,
-      eventH = 34 * fontZoom;
+  static const double badgeH = 26;
   // 儀表卡片尺寸，以 390 寬螢幕為例：
   //   v8：寬 = 原本 90%（245）；高 = 原本 150 × 0.624 ≈ 94；上邊距 10、徽章與卡片間距 8
   //   （v13 曾放大 20%，v14 依需求改回）
@@ -87,12 +86,7 @@ class PortraitPanel extends StatelessWidget {
     return (rest >= lineMinH ? rest : 0, 0);
   }
 
-  static String congestionLabel(String c) => switch (c) {
-    'smooth' => '順暢',
-    'slow' => '車多',
-    'congested' => '壅塞',
-    _ => '',
-  };
+  static String congestionLabel(String c) => tdxCongestionLabel(c);
 
   @override
   Widget build(BuildContext context) => lineEnabled
@@ -107,17 +101,15 @@ class PortraitPanel extends StatelessWidget {
     builder: (context, box) {
       final w = box.maxWidth;
       final modern = state.modernOverlay;
-      final tdxSpeed = modern && !stale ? state.tdxNextSpeedDisplay : null;
-      // 碰撞注意（近距離警示）優先於 TDX 事件，佔同一列
-      final banner = state.eventBanner;
-      final event = banner.text;
+      // 路況卡（前方車速＋國道資訊），高度依內容行數
+      final routeH = modern && !stale && TdxRouteCard.visible(state, portrait: true)
+          ? TdxRouteCard.heightFor(state, fontZoom, portrait: true) : 0.0;
 
       // 卡片：內容高度（字級依此）＝ 寬度的 0.42 × 0.624 × 1.2（上限約 113），卡片實際高度 × cardBoxTrim；
       // 剩餘高度不夠時再一起縮（短螢幕不溢出）
       final fixed =
           topPad +
-          (tdxSpeed != null ? tdxRowH + gap : 0) +
-          (event.isNotEmpty ? eventH + gap : 0) +
+          (routeH > 0 ? routeH + gap : 0) +
           8 +
           // 開啟 LINE 時，卡片大小以「LINE 至少兩行」計算（不論當下有沒有訊息），卡片不會因訊息跳動
           (lineEnabled ? lineMinH + gap : 0);
@@ -135,8 +127,7 @@ class PortraitPanel extends StatelessWidget {
       final used =
           topPad +
           (showCard ? cardBoxH : 0) +
-          (tdxSpeed != null ? gap + tdxRowH : 0) +
-          (event.isNotEmpty ? gap + eventH : 0);
+          (routeH > 0 ? gap + routeH : 0);
       // 下方剩餘高度：LINE 與停車共用（各自上方間距 8，底部留 8），分配規則見 splitRest
       final rest = math.max(0.0, box.maxHeight - used - 16);
       final (lineH, parkingH) = splitRest(rest,
@@ -158,24 +149,10 @@ class PortraitPanel extends StatelessWidget {
                 height: cardBoxH,
                 child: _cardWithBlinkers(cardH, cardBoxH, w - 2 * pad),
               ),
-            if (tdxSpeed != null) ...[
+            if (routeH > 0) ...[
               const SizedBox(height: gap),
-              _tdxRow(tdxSpeed),
-            ],
-            if (event.isNotEmpty) ...[
-              const SizedBox(height: gap),
-              SizedBox(
-                height: eventH,
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: TdxMarquee(
-                    text: event,
-                    collision: banner.collision,
-                    maxWidth: w - 2 * pad,
-                    fontSize: 17.25 * fontZoom,
-                  ),
-                ),
-              ),
+              SizedBox(key: const ValueKey('route'), height: routeH,
+                  child: TdxRouteCard(state: state, scale: fontZoom, portrait: true)),
             ],
             if (lineH > 0) ...[
               const SizedBox(height: 8),
@@ -241,9 +218,7 @@ class PortraitPanel extends StatelessWidget {
           child: DashboardCard(
             state: state,
             stale: stale,
-            tdxInRightColumn: false,
             contentHeight: cardH, // 字級依原本高度，卡片本身較矮
-            expBadge: true, // 實驗模式：卡片左上角 EXP（取代已移除的徽章列）
           ),
         ),
         side(false),
@@ -259,8 +234,7 @@ class PortraitPanel extends StatelessWidget {
     return Stack(clipBehavior: Clip.none, children: [
       Positioned.fill(child: Container(
         padding: const EdgeInsets.fromLTRB(14, linePadV, 14, linePadV),
-        decoration: BoxDecoration(color: const Color(0xFF0D151B), borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: lineGreen.withAlpha(90))),
+        decoration: opviewPanel(border: lineGreen.withAlpha(90)), // 共用面板外觀，LINE 用綠色邊框
         child: LayoutBuilder(builder: (context, box) {
           final scaler = MediaQuery.textScalerOf(context);
           final lineH = scaler.scale(lineFont) * lineHeight;
@@ -295,7 +269,7 @@ class PortraitPanel extends StatelessWidget {
       // 「LINE · N 則」小標籤貼在上邊框（落在上方 8 px 間距裡，不佔訊息行數）
       Positioned(right: 14, top: -8, child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 6),
-        decoration: BoxDecoration(color: const Color(0xFF0D151B), borderRadius: BorderRadius.circular(6),
+        decoration: BoxDecoration(color: const Color(0xFF0D151B), borderRadius: BorderRadius.circular(6), // 不透明：蓋住邊框線
             border: Border.all(color: lineGreen.withAlpha(140))),
         child: Text(msgs.length > 1 ? 'LINE · ${msgs.length} 則' : 'LINE',
           style: const TextStyle(fontSize: 9 * fontZoom, color: lineGreen, fontWeight: FontWeight.w800,
@@ -309,54 +283,4 @@ class PortraitPanel extends StatelessWidget {
       TextSpan(text: '${m.sender}：', style: const TextStyle(color: lineGreen, fontWeight: FontWeight.w700)),
     TextSpan(text: m.text),
   ]);
-
-  Widget _tdxRow(int speed) {
-    final c = tdxCongestionColor(state.tdxCongestion);
-    final label = congestionLabel(state.tdxCongestion);
-    return Container(
-      height: tdxRowH,
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0D151B),
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          const Text(
-            '前方車速',
-            style: TextStyle(fontSize: 12 * fontZoom, color: Colors.white60),
-          ),
-          const SizedBox(width: 14),
-          Text(
-            '$speed',
-            style: TextStyle(
-              fontSize: 26 * fontZoom,
-              fontWeight: FontWeight.w700,
-              color: c,
-              height: 1,
-            ),
-          ),
-          const SizedBox(width: 6),
-          Text(
-            state.isMetric ? 'km/h' : 'mph',
-            style: const TextStyle(
-              fontSize: 12 * fontZoom,
-              color: Colors.white60,
-            ),
-          ),
-          const Spacer(),
-          if (label.isNotEmpty)
-            Text(
-              'TDX $label',
-              style: TextStyle(
-                fontSize: 12 * fontZoom,
-                color: c,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-        ],
-      ),
-    );
-  }
 }

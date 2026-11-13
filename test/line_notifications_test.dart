@@ -42,7 +42,9 @@ void main() {
     expect(lineSenderLabel('帥哥宗1779', '帥哥宗1779'), '帥哥宗1779');
   });
 
-  testWidgets('portrait: LINE box is the third layer below TDX speed and event', (tester) async {
+  // 2026-11-12 版面統一：事件改疊在道路畫面上方，下方依序是 卡片 → 路況卡 → LINE
+  // 2026-11-13：直向 TDX 事件收進路況卡（前方車速下一行）
+  testWidgets('portrait: LINE box below the route card; event inside the route card', (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1;
     addTearDown(() { tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio(); });
@@ -59,9 +61,12 @@ void main() {
     final speed = tester.getRect(find.text('前方車速'));
     final event = tester.getRect(find.textContaining('施工'));
     final line = tester.getRect(find.textContaining('我到停車場了'));
+    final videoH = 390 * 1208 / 1928;
     expect(speed.top, greaterThan(card.bottom));
-    expect(event.top, greaterThan(speed.bottom));
+    expect(line.top, greaterThan(speed.bottom));
+    expect(event.top, greaterThan(speed.bottom - 1)); // 事件在路況卡裡、前方車速下面
     expect(line.top, greaterThan(event.bottom));
+    expect(event.top, greaterThan(videoH));
     // v20：字級 14 × 1.3；空間足夠時這則（約 3 行）完整顯示，不截斷
     expect(line.height, greaterThanOrEqualTo(14 * 1.3 * 1.3 * 2 - 1));
     final t = tester.widget<Text>(find.textContaining('我到停車場了'));

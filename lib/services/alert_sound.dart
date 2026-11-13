@@ -71,6 +71,20 @@ Future<void> playStopGoSound(StopGoKind kind, AlertSoundMode mode) async {
   lastAlertSoundStatus.value = status;
 }
 
+/// 國道車速驟降：單聲嗶（1.0 kHz、150 ms，比近距離警示的 1.6 kHz 低；不受起步提醒聲音設定影響）
+Future<void> playTdxDropBeep() async {
+  String status;
+  try {
+    final r = await _channel.invokeMethod<Object?>('tdxDropBeep');
+    status = r is String ? r : '已送出';
+  } on PlatformException catch (e) {
+    status = '播放失敗：${e.message}';
+  } on MissingPluginException {
+    return; // 測試 / 非 Android
+  }
+  debugPrint('[opview] 國道車速驟降提醒聲：$status');
+}
+
 /// 近距離警示：單聲嗶（Android 端程式產生 1.6 kHz、180 ms，與起步提醒的雙聲嗶區隔）
 Future<void> playProximityBeep() async {
   String status;

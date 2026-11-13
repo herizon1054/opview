@@ -357,6 +357,9 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
   /// 橫向右上角第一個元件的上緣：全螢幕時讓給叫回按鈕（上下內距 10 + 按鈕 48）
   double get _rightTop => _showRail ? 12 : 66;
 
+  /// 儀表介面的啟用狀態外框寬度（dp，固定，不隨畫面縮放）
+  static const modernBorderSize = 6.0;
+
   /// 橫向警示列下緣（路況卡從這裡往下排，不會被警示列蓋到）
   static const _landscapeBannerBottom = 12 + 17.25 * 1.3 * 2.2;
 
@@ -410,7 +413,10 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
         final screenH = constraints.maxHeight;
         // HUD / 警示 / 邊框依「短邊」縮放：橫向 = 高（與原本相同），直向 = 寬（避免直向時被放大到超出寬度）
         final scale = min(screenW, screenH) / 1080.0;
-        final borderSize = (widget.pip || widget.uiState.modernOverlay ? 3 : uiBorderSize) * scale;
+        // 啟用狀態外框（綠＝啟用、藍＝未啟用、灰＝介入）。儀表介面原本 3 × scale，手機上只有約 1 dp 看不出來，
+        // 2026-11-14 改為固定 6 dp（不隨畫面縮放）；畫中畫維持 3 × scale，原版介面維持 uiBorderSize × scale。
+        // HUD 層內縮同樣寬度（Padding），盲點光暈、路徑裁切區也跟著內縮，版面相對位置不變。
+        final borderSize = widget.pip ? 3 * scale : widget.uiState.modernOverlay ? modernBorderSize : uiBorderSize * scale;
         // 實驗模式圖示（直向、橫向唯一的實驗模式標示，openpilot HUD 圖案）：直向 34 dp，橫向依短邊縮放（36~56 dp）。
         //   直向：道路畫面左側中上（圖示中心在畫面高度 35%），左緣 12
         //   橫向：右上角（同 openpilot）。全螢幕時右上角是叫回按鈕 → 排在按鈕下方；

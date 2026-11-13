@@ -214,7 +214,7 @@ class UIState extends ChangeNotifier {
   // 斷線重連後的第一筆 selfdriveState 不算（距離上一筆超過 disengageMaxGap）。
 
   /// 顯示設定「巡航解除提示」（app.dart 同步）；關閉時不發事件、不顯示
-  bool disengageAlert = true;
+  bool disengageAlert = false;
   static const disengageBannerText = '巡航解除';
   static const disengageShowFor = Duration(seconds: 2);
   static const disengageMinSpeed = 1.0; // m/s（約 3.6 km/h）

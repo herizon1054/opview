@@ -202,7 +202,8 @@ void main() {
     expect(glow.fastBlink, isFalse);
     // 光暈貼右邊緣、只佔窄窄一段（不是整片）
     final r = tester.getRect(find.byType(BlindspotGlow));
-    expect(r.right, closeTo(844, 4));
+    // 貼在啟用狀態外框內側（儀表介面外框 6 dp）
+    expect(r.right, closeTo(844 - 6, 1));
     expect(r.width, lessThan(844 * .12));
 
     state.rightBlinker = true;

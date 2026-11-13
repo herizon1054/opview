@@ -14,7 +14,9 @@ Map<String, dynamic> _sd(bool on, [String state = '']) =>
 /// 可控時間的 UIState；先送一筆 enabled（建立「上一筆」）
 (UIState, List<void>, void Function(Duration)) _setup({double vEgo = 18, bool modern = false}) {
   var t = DateTime(2026, 11, 14, 1, 0);
-  final s = createMockUIState(vEgo: vEgo)..modernOverlay = modern;
+  final s = createMockUIState(vEgo: vEgo)
+    ..modernOverlay = modern
+    ..disengageAlert = true; // 設定預設關閉，測試時打開
   s.clock = () => t;
   final events = <void>[];
   s.disengageEvents.listen(events.add);
@@ -97,13 +99,16 @@ void main() {
     s.dispose();
   });
 
-  test('setting persists (default on)', () async {
+  test('setting persists (default off)', () async {
     final v = ViewerSettings();
     await v.load();
-    expect(v.disengageAlert, isTrue);
-    v.setDisengageAlert(false);
+    expect(v.disengageAlert, isFalse);
+    final u = UIState();
+    expect(u.disengageAlert, isFalse);
+    u.dispose();
+    v.setDisengageAlert(true);
     final p = await SharedPreferences.getInstance();
-    expect(p.getBool('viewer_disengage_alert'), isFalse);
+    expect(p.getBool('viewer_disengage_alert'), isTrue);
     v.dispose();
   });
 

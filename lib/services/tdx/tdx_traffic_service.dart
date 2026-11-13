@@ -7,8 +7,8 @@
 //     沒填金鑰就不抓、不顯示。
 //   - 頻率：與停車共用同一個本機節流 parkingGate（會員金鑰每分鐘 5 次）；停車查詢 / 下載進行中時路況暫停，
 //     額度滿時這一輪直接略過，不排隊等待。
-//   - 路上每 60 秒一輪、最多 2 次：所在道路的即時路段車速 + 即時事件（國道 / 省道 / 有即時資料的縣市；
-//     不在任何路段上時只抓該縣市事件）。
+//   - 路上每 60 秒一輪、最多 3 次：所在道路的即時路段車速 + 即時事件（國道 / 省道 / 有即時資料的縣市；
+//     不在任何路段上時只抓該縣市事件）；國道另抓前方偵測器的各車道車速（Live VD，只抓前方 8 支）。
 //   - 路段線形與名稱（國道、省道，以及經過的縣市）存在 App 資料夾，7 天更新一次（手機網路流量考量，
 //     comma 端是每天）；過期仍先用舊的，背景再更新。
 //   - 有網路就抓，沒網路（或 TDX 連不到）就安靜略過，60 秒後再試。
@@ -73,6 +73,8 @@ class TdxTrafficService {
   bool _geoBusy = false;
   String? _city;
   String _road = '';
+  double _ownKph = -1; // 手機 GPS 車速（只供 log 核對）
+  String _logKey = ''; // 上次 log 的位置 / 前方車速來源（只在變化時記一筆）
 
   // 資料
   final _sections = <String, TdxSections>{}; // auth -> 路段
@@ -81,12 +83,19 @@ class TdxTrafficService {
   final _diskTried = <String>{}; // 已試過從磁碟載入的 auth（沒快取時不要每秒重讀）
   final _live = <String, (double, Map<String, int>)>{}; // auth -> (取得時間 epoch 秒, 車速)
   final _events = <String, (double, List<TdxEvent>)>{};
+  TdxVdIndex? _vds; // 國道偵測器位置
+  (double, Map<String, List<TdxLane>>)? _vdLive;
+  List<String> _vdAhead = const []; // 前方偵測器（下一輪 Live VD 要抓的）
+  bool _vdFilter = true; // TDX 接受 \$filter；不接受時改抓全部（每 3 輪一次）
+  int _vdRound = 0;
+  final _vdLogged = <String>{}; // 已記過原始車道資料的偵測器
   DateTime _lastRound = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _failUntil = DateTime.fromMillisecondsSinceEpoch(0);
   bool? _online;
   bool _skipped = false; // 上一次 _callBytes 是因額度 / 停車查詢中而略過（不是失敗）
   String _lastErr = '無網路'; // 上一次失敗原因（顯示設定的狀態文字用）
   String? _auth;
+  int? _lastOptionalStatus;
 
   // 連線
   http.Client? _client;
@@ -169,6 +178,7 @@ class TdxTrafficService {
     _lat = p.latitude;
     _lon = p.longitude;
     _fixAt = DateTime.now();
+    if (p.speed.isFinite && p.speed >= 0) _ownKph = p.speed * 3.6;
     if (p.speed.isFinite && p.speed > _minHeadingSpeed && p.heading.isFinite && p.heading >= 0) {
       _hd = p.heading % 360.0;
     }
@@ -221,19 +231,54 @@ class TdxTrafficService {
         speeds: live != null && nowWall - live.$1 < _liveFresh ? live.$2 : null,
         events: _hd == null ? const [] : events,
         showCurrentFirst: (DateTime.now().millisecondsSinceEpoch ~/ 10000) % 2 == 0,
+        vds: _vds,
+        vdLive: _vdLive != null && nowWall - _vdLive!.$1 < _liveFresh ? _vdLive!.$2 : null,
       );
+      _vdAhead = [for (final v in rep['vdAhead'] as List) v as String];
       _ui?.applyTdx(rep);
+      _logReport(rep, live);
       final where = _hd == null ? '等待行駛方向（車速 11 km/h 以上）' : switch (rep['auth']) {
         'Freeway' => '國道', 'Highway' => '省道', 'City' => '市區道路', _ => '不在 TDX 路段上',
       };
       final road = rep['road'] as String? ?? '';
       status.value = _online == false
           ? '$_lastErr，60 秒後重試（$where）'
-          : '$where${road.isEmpty ? '' : ' $road'}${live == null ? '' : '，車速 ${(nowWall - live.$1).round()} 秒前'}';
+          : '$where${road.isEmpty ? '' : ' $road'}${live == null ? '' : '，車速 ${(nowWall - live.$1).round()} 秒前'}'
+            '${_nextSource(rep)}';
     } catch (e, st) {
       debugPrint('[tdx] report 例外：$e\n$st');
     }
     _maybeWork();
+  }
+
+  /// 「前方車速 87 km/h：本段」或「…：前方 1.2 公里 ○○–○○」（設定頁狀態，方便在車上核對來源）
+  static String _nextSource(Map<String, dynamic> rep) {
+    final v = rep['nextSpeed'];
+    if (v is! int || v <= 0) return '';
+    final d = (rep['nextD'] as num?)?.toDouble() ?? 0;
+    final name = rep['nextName'] as String? ?? '';
+    final from = rep['nextSid'] == rep['sid'] ? '本段' : '前方 ${tdxDistText(d)}${name.isEmpty ? '' : ' $name'}';
+    return '\n前方車速 $v km/h：$from';
+  }
+
+  /// 所在路段或前方車速來源變了才記一筆（核對 TDX 原始資料用）
+  void _logReport(Map<String, dynamic> rep, (double, Map<String, int>)? live) {
+    final q = rep['queue'] as Map?, ln = rep['lanes'] as Map?;
+    final key = '${rep['auth']}/${rep['sid']}/${rep['nextSpeed']}/${rep['nextSid']}/${q?['min']}/${ln?['vd']}';
+    if (key == _logKey) return;
+    _logKey = key;
+    final auth = rep['auth'];
+    final where = auth == null ? '不在 TDX 路段上' : '$auth ${rep['road']}（${rep['sid']}）本段 ${rep['speed']} km/h';
+    final next = rep['nextSpeed'] is int && (rep['nextSpeed'] as int) > 0
+        ? '｜前方車速 ${rep['nextSpeed']}：${rep['nextSid'] == rep['sid'] ? '本段' : '${rep['nextName']}（${rep['nextSid']}，'
+            '${tdxDistText((rep['nextD'] as num).toDouble())}）'}${live == null ? '' : '，TDX 資料 ${(DateTime.now().millisecondsSinceEpoch / 1000 - live.$1).round()} 秒前取得'}'
+        : '';
+    final queue = q == null ? '' : '｜回堵 ${tdxDistText((q['d'] as num).toDouble())}起 '
+        '${tdxDistText((q['len'] as num).toDouble())}${q['open'] == true ? '以上' : ''}（均 ${q['avg']}、最慢 ${q['min']}）';
+    final lanes = ln == null ? '' : '｜車道 ${ln['vd']}（${tdxDistText((ln['d'] as num).toDouble())}）'
+        'LaneID ${ln['ids']} 種類 ${ln['types']} 車速 ${ln['speeds']}';
+    debugPrint('[tdx] 位置：$where$next$queue$lanes｜地理編碼 ${_city ?? '-'} ${_road.isEmpty ? '-' : _road}'
+        '｜手機車速 ${_ownKph < 0 ? '-' : _ownKph.round()} km/h');
   }
 
   List<String> _auths() => [
@@ -324,7 +369,7 @@ class TdxTrafficService {
         final fail = _staticFailUntil[spec.name];
         if (fail != null && now.isBefore(fail)) continue;
         // 名稱要等線形先有
-        if (spec.isNames && !_sections.containsKey(a)) continue;
+        if (spec.kind == _Static.names && !_sections.containsKey(a)) continue;
         await _fetchStatic(a, spec, gen);
         return;
       }
@@ -355,8 +400,41 @@ class TdxTrafficService {
       }
       // 彰化、雲林有即時車速但沒有事件資料（TDX 回 404 → 會被當成離線 60 秒並浪費一次額度）
       if (_hasEvents(auth)) await events(auth);
+      if (gen != _gen) return;
+      if (auth == 'Freeway' && _vds != null && _vdAhead.isNotEmpty) await _roundVd(gen, wall);
     } else if (city != null && tdxEventCities.contains(city)) {
       await events('City:$city');
+    }
+  }
+
+  /// 國道各車道車速：只抓前方偵測器（\$filter=VDID eq … or …）。TDX 不接受篩選時改抓全部，每 3 輪一次。
+  Future<void> _roundVd(int gen, double wall) async {
+    final ids = _vdAhead;
+    final all = !_vdFilter;
+    if (all && _vdRound++ % 3 != 0) return;
+    final filter = ids.map((id) => "VDID eq '${id.replaceAll("'", "''")}'").join(' or ');
+    final b = await _callBytes('v2/Road/Traffic/Live/VD/Freeway', query: all ? null : {r'$filter': filter},
+        optional: true);
+    if (gen != _gen) return;
+    if (b == null) {
+      if (_lastOptionalStatus == 400 && _vdFilter) {
+        _vdFilter = false;
+        debugPrint('[tdx] TDX 不接受 VD 篩選（HTTP 400），改為每 3 分鐘下載全部國道偵測器');
+      }
+      return;
+    }
+    try {
+      final live = await compute(_parseVds, (b, wall));
+      _vdLive = (wall, live);
+      if (all) debugPrint('[tdx] Live VD 全部 ${b.length} bytes，${live.length} 支');
+      for (final id in ids) {
+        final l = live[id];
+        if (l != null && _vdLogged.add(id)) {
+          debugPrint('[tdx] 偵測器 $id 原始車道：${[for (final x in l) 'LaneID ${x.id}/種類 ${x.type}/${x.speed}'].join('、')}');
+        }
+      }
+    } catch (e) {
+      debugPrint('[tdx] VD 格式異常：$e');
     }
   }
 
@@ -368,12 +446,13 @@ class TdxTrafficService {
   static String _livePath(String auth) => 'v2/Road/Traffic/Live/${_sub(auth)}';
   static String _eventPath(String auth) => 'v1/Traffic/RoadEvent/LiveEvent/${_sub(auth)}';
 
-  static List<({String name, String path, bool isNames})> _staticSpecs(String auth) {
+  static List<_Spec> _staticSpecs(String auth) {
     final key = auth.startsWith('City:') ? auth.substring(5) : auth;
     final sub = _sub(auth);
     return [
-      (name: 'shape_$key', path: 'v2/Road/Traffic/SectionShape/$sub', isNames: false),
-      (name: 'sect_$key', path: 'v2/Road/Traffic/Section/$sub', isNames: true),
+      (name: 'shape_$key', path: 'v2/Road/Traffic/SectionShape/$sub', kind: _Static.shape),
+      (name: 'sect_$key', path: 'v2/Road/Traffic/Section/$sub', kind: _Static.names),
+      if (auth == 'Freeway') (name: 'vd_Freeway', path: 'v2/Road/Traffic/VD/Freeway', kind: _Static.vd),
     ];
   }
 
@@ -413,6 +492,18 @@ class TdxTrafficService {
     _staticAt[specs[0].name] = shapes.$1;
     if (names != null) _staticAt[specs[1].name] = names.$1;
     await _build(auth, shapes.$2 as Map, names?.$2 is Map ? names!.$2 as Map : null);
+    if (specs.length > 2) {
+      final vd = await _readCache(specs[2].name);
+      if (vd != null && vd.$2 is Map) {
+        _staticAt[specs[2].name] = vd.$1;
+        await _buildVds(vd.$2 as Map);
+      }
+    }
+  }
+
+  Future<void> _buildVds(Map raw) async {
+    _vds = await compute(_buildVdIndex, raw);
+    debugPrint('[tdx] 國道偵測器 ${_vds!.length} 支');
   }
 
   Future<void> _build(String auth, Map shapes, Map? names) async {
@@ -421,7 +512,7 @@ class TdxTrafficService {
     debugPrint('[tdx] $auth 路段 ${s.length} 筆');
   }
 
-  Future<void> _fetchStatic(String auth, ({String name, String path, bool isNames}) spec, int gen) async {
+  Future<void> _fetchStatic(String auth, _Spec spec, int gen) async {
     final bytes = await _callBytes(spec.path, big: true);
     if (gen != _gen) return;
     if (bytes == null) {
@@ -429,14 +520,16 @@ class TdxTrafficService {
       return;
     }
     try {
-      final shrunk = await compute(_shrinkStatic, (bytes, spec.isNames));
+      final shrunk = await compute(_shrinkStatic, (bytes, spec.kind.index));
       if (shrunk.isEmpty) throw const FormatException('空的資料');
       final now = DateTime.now();
       await _writeCache(spec.name, shrunk, now);
       _staticAt[spec.name] = now;
       debugPrint('[tdx] 已更新 ${spec.name}（${bytes.length} bytes，${shrunk.length} 筆）');
       if (gen != _gen) return;
-      if (spec.isNames) {
+      if (spec.kind == _Static.vd) {
+        await _buildVds(shrunk);
+      } else if (spec.kind == _Static.names) {
         final shapes = await _readCache(_staticSpecs(auth)[0].name);
         if (shapes != null && shapes.$2 is Map) await _build(auth, shapes.$2 as Map, shrunk);
       } else {
@@ -451,15 +544,18 @@ class TdxTrafficService {
 
   // ------------------------------------------------------------------ TDX 呼叫
   /// 一次 API 呼叫；離線、額度滿、停車查詢進行中都回傳 null（不重試，下一輪再說）
-  Future<List<int>?> _callBytes(String path, {bool big = false}) async {
+  /// [optional]：HTTP 4xx（401、429 除外）不當成離線，只回傳 null 並記在 _lastOptionalStatus（VD 篩選用）
+  Future<List<int>?> _callBytes(String path, {bool big = false, Map<String, String>? query,
+      bool optional = false}) async {
     _skipped = true;
+    _lastOptionalStatus = null;
     if (!_config.hasCredentials || DateTime.now().isBefore(_failUntil)) return null;
     if (parkingApi.busy || ParkingStartup.instance.busy) return null;
     try {
       if (await parkingGate.reserveData() != 0) return null; // 本機每分鐘 5 次滿了：略過
       _skipped = false;
       final token = await _getToken();
-      final req = http.Request('GET', Uri.https(_host, '/api/basic/$path', {r'$format': 'JSON'}))
+      final req = http.Request('GET', Uri.https(_host, '/api/basic/$path', {...?query, r'$format': 'JSON'}))
         ..followRedirects = false
         ..headers.addAll({
           'Authorization': 'Bearer $token', 'User-Agent': _ua,
@@ -473,6 +569,12 @@ class TdxTrafficService {
           await parkingGate.blockFor(Duration(seconds: s != null && s > 0 ? s : 60));
         }
         if (res.statusCode == 401) _token = null;
+        final c = res.statusCode;
+        if (optional && c >= 400 && c < 500 && c != 401 && c != 429) {
+          _lastOptionalStatus = c;
+          debugPrint('[tdx] $path：HTTP $c（略過，不影響其他路況資料）');
+          return null;
+        }
         throw HttpException('HTTP ${res.statusCode}');
       }
       final bb = BytesBuilder(copy: false);
@@ -527,7 +629,16 @@ class TdxTrafficService {
 Object? _json(List<int> bytes) => jsonDecode(utf8.decode(bytes));
 Map<String, int> _parseSpeeds((List<int>, double) m) => tdxLiveSpeeds(_json(m.$1), m.$2);
 List<TdxEvent> _parseEvents((List<int>, double) m) => tdxLiveEvents(_json(m.$1), m.$2);
-Map _shrinkStatic((List<int>, bool) m) => m.$2 ? tdxShrinkSections(_json(m.$1)) : tdxShrinkShapes(_json(m.$1));
+Map _shrinkStatic((List<int>, int) m) => switch (_Static.values[m.$2]) {
+  _Static.names => tdxShrinkSections(_json(m.$1)),
+  _Static.shape => tdxShrinkShapes(_json(m.$1)),
+  _Static.vd => tdxShrinkVds(_json(m.$1)),
+};
+Map<String, List<TdxLane>> _parseVds((List<int>, double) m) => tdxLiveVds(_json(m.$1), m.$2);
+TdxVdIndex _buildVdIndex(Map m) => TdxVdIndex(m);
+
+enum _Static { shape, names, vd }
+typedef _Spec = ({String name, String path, _Static kind});
 TdxSections _buildSections((Map, Map?) m) => TdxSections(m.$1, m.$2);
 (int, Object?) _decodeCache(String text) {
   final j = jsonDecode(text) as Map;

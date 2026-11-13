@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:opview/selfdrive/ui/onroad/freeway_info.dart';
 import 'package:opview/selfdrive/ui/ui_state.dart';
 import 'package:opview/selfdrive/ui/onroad/augmented_road_view.dart';
 import 'package:opview/selfdrive/ui/onroad/tdx_marquee.dart';
@@ -67,7 +68,8 @@ void main() {
     s.dispose();
   });
 
-  testWidgets('dashboard: car icon becomes 前方車速 when TDX speed present; marquee on top', (tester) async {
+  // 2026-11-12 版面統一：卡片右欄固定是前車；前方車速在左上角路況卡，事件在上方警示列
+  testWidgets('dashboard: 前方車速 in the route card (top-left), card keeps the lead; marquee on top', (tester) async {
     tester.view.physicalSize = const Size(844, 390);
     tester.view.devicePixelRatio = 1;
     addTearDown(() { tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio(); });
@@ -86,10 +88,15 @@ void main() {
     state.notifyNow();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 500));
-    expect(find.byIcon(Icons.directions_car_outlined), findsNothing);
+    expect(find.byIcon(Icons.directions_car_outlined), findsOneWidget); // 卡片右欄仍是前車
     expect(find.text('前方車速'), findsOneWidget);
     expect(find.text('62'), findsOneWidget);
+    expect(find.byType(TdxRouteCard), findsOneWidget);
+    final route = tester.getRect(find.byType(TdxRouteCard));
+    expect(route.left, lessThan(844 / 2));
+    expect(route.top, lessThan(390 / 2));
     expect(find.byType(TdxMarquee), findsOneWidget);
+    expect(route.top, greaterThanOrEqualTo(tester.getRect(find.byType(TdxMarquee)).bottom)); // 不被警示列蓋到
     // 跑馬燈在畫面上半部
     expect(tester.getRect(find.byType(TdxMarquee)).top, lessThan(60));
     expect(tester.takeException(), isNull);

@@ -95,11 +95,11 @@ void main() {
     state.dispose();
   });
 
-  // 橫向「無卡片」：TDX 前方車速原本在卡片右欄，改以小膠囊顯示；有卡片時不出現膠囊
-  testWidgets('landscape without card still shows TDX next speed chip', (tester) async {
-    final state = createMockUIState()
+  // 2026-11-12 版面統一：卡片右欄固定是前車；「無卡片」時也不再另外畫前方車速膠囊（改在路況卡）；
+  // ENGAGED / EXPERIMENTAL 文字徽章拿掉，只在資料中斷時顯示警告徽章
+  testWidgets('landscape card: lead in the right column, no TDX chip, no status badges', (tester) async {
+    final state = createMockUIState(experimentalMode: true)
       ..modernOverlay = true
-      ..hideHudCard = true
       ..applyTdx({'nextSpeed': 72, 'congestion': 'smooth', 'events': []});
     Widget app() => MaterialApp(theme: ThemeData.dark(), home: MediaQuery(
         data: const MediaQueryData(size: Size(800, 400)),
@@ -107,16 +107,19 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(800, 400));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(app());
-    expect(find.byType(DashboardCard), findsNothing);
-    expect(find.text('72'), findsOneWidget);
-    expect(find.text('順暢'), findsOneWidget);
+    expect(find.byType(DashboardCard), findsOneWidget);
+    expect(find.byIcon(Icons.directions_car_outlined), findsOneWidget);
+    expect(find.text('72'), findsNothing);
+    expect(find.text('ENGAGED'), findsNothing);
+    expect(find.text('EXPERIMENTAL'), findsNothing);
+    expect(find.text('EXP'), findsNothing);
     expect(tester.takeException(), isNull);
 
-    state.hideHudCard = false;
+    state.hideHudCard = true;
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpWidget(app());
-    expect(find.byType(DashboardCard), findsOneWidget);
-    expect(find.text('順暢'), findsNothing); // 卡片右欄只有數字，沒有分級文字
+    expect(find.byType(DashboardCard), findsNothing);
+    expect(find.text('72'), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
     state.dispose();
   });

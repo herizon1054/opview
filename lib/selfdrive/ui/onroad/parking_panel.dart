@@ -12,6 +12,7 @@ import '../../../services/parking/parking_model.dart';
 import '../../../services/parking/parking_quota_store.dart';
 import '../../../services/parking/parking_startup.dart';
 import '../ui_state.dart';
+import 'dashboard_hud.dart' show opviewPanel;
 import '../settings/parking_settings_dialog.dart';
 
 class ParkingPanel extends StatefulWidget {
@@ -246,11 +247,9 @@ class _ParkingPanelState extends State<ParkingPanel>
       final now = DateTime.now();
       final mode = _config.hasCredentials ? 'TDX 會員' : '尚未設定金鑰';
       return Container(
-        padding: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: const Color(0xFF0D151B),
-          borderRadius: BorderRadius.circular(16),
-        ),
+        // 共用面板外觀（2026-11-12 版面統一）；邊框 1 px，內距 8 → 7，內容大小不變
+        padding: const EdgeInsets.all(7),
+        decoration: opviewPanel(),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

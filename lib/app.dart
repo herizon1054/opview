@@ -40,6 +40,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
   bool? _pipOffered;
   StreamSubscription<StopGoKind>? _stopGoSub;
   StreamSubscription<ProximityTarget>? _proximitySub;
+  StreamSubscription<String>? _tdxDropSub;
   int _lifecycleEpoch = 0;
   AppLifecycleState _lifecycle = AppLifecycleState.resumed;
   bool _inBackground = false; // 背景執行中（保持連線、播放起步語音）
@@ -182,6 +183,10 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     _stopGoSub = StopGoAlerts.instance.events.listen((k) => playStopGoSound(k, _settings.alertSound));
     // 近距離警示：一律嗶一聲（不受起步提醒的聲音設定影響）
     _proximitySub = ProximityAlert.instance.events.listen((_) => playProximityBeep());
+    // 國道車速驟降（TDX）：開關在顯示設定
+    _tdxDropSub = _uiState.tdxDropEvents.listen((_) {
+      if (_settings.tdx && _settings.tdxDropBeep) playTdxDropBeep();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) ParkingStartup.instance.start();
     });
@@ -191,6 +196,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
   void dispose() {
     _stopGoSub?.cancel();
     _proximitySub?.cancel();
+    _tdxDropSub?.cancel();
     system.setBackgroundKeepAlive(false);
     WidgetsBinding.instance.removeObserver(this);
     ParkingStartup.instance.stop();

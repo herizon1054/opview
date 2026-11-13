@@ -33,6 +33,18 @@ const _cardWidthOfWPortrait = .66;   // CommaView 為 3.9%，依需求改 2%
 const tdxSmoothColor = dashboardTeal;              // tici: (128, 216, 166)
 const tdxSlowColor = Color(0xFFE2C275);            // tici: (255, 204, 0)
 const tdxCongestedColor = Color(0xFFE88A80);       // tici: (255, 100, 100)
+/// 壅塞分級文字（路況卡用）
+String tdxCongestionLabel(String c) => switch (c) {
+  'smooth' => '順暢', 'slow' => '車多', 'congested' => '壅塞', _ => '',
+};
+
+/// 所有資訊面板共用的外觀（2026-11-12 版面統一）：儀表卡片同色系的半透明深底、細青綠邊框、圓角 14。
+/// 警示（碰撞注意 / 車速驟降）另有自己的底色。
+const opviewPanelFill = Color(0xDC0D171C);
+const opviewPanelBorder = Color(0x335DE3D4);
+BoxDecoration opviewPanel({double radius = 14, Color border = opviewPanelBorder}) => BoxDecoration(
+  color: opviewPanelFill, borderRadius: BorderRadius.circular(radius), border: Border.all(color: border));
+
 Color tdxCongestionColor(String congestion) => switch (congestion) {
   'smooth' => tdxSmoothColor,
   'slow' => tdxSlowColor,
@@ -59,36 +71,16 @@ class DashboardHud extends StatelessWidget {
     return IgnorePointer(child: Stack(children: [
       const Positioned(top: 16, left: 18, child: Text('opview',
         style: TextStyle(fontSize: 20, color: Colors.white70, fontWeight: FontWeight.w700))),
-      // 狀態徽章：橫向與卡片垂直置中對齊（同 CommaView），徽章高約 26dp；
-      // 直向卡片佔大部分寬度，改放卡片上方左側，避免重疊
-      if (portrait)
-        Positioned(left: cardLeft, bottom: bottom + cardH + 8, child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _badge(status, color),
-            if (state.experimentalMode && !stale) ...[
-              const SizedBox(width: 6), _badge('EXPERIMENTAL', Colors.amberAccent),
-            ],
-          ],
-        ))
-      else
-        Positioned(left: 14, bottom: bottom + math.max(0.0, (cardH - 26) / 2), child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min,
-          children: [
-            if (state.experimentalMode && !stale)
-              _badge('EXPERIMENTAL', Colors.amberAccent),
-            const SizedBox(height: 6), _badge(status, color),
-          ],
-        )),
+      // 狀態徽章（2026-11-12 版面統一）：ENGAGED / EXPERIMENTAL 文字徽章拿掉，與直向一致——
+      // 狀態看卡片顏色，實驗模式看道路畫面上的燒瓶圖示。只在資料中斷 / 延遲時顯示警告徽章。
+      if (stale)
+        Positioned(left: 14, bottom: bottom + math.max(0.0, (cardH - 26) / 2), child: _badge(status, color)),
       // 「無卡片」：不畫卡片，方向燈箭頭仍在原位置
+      // TDX 前方車速改在左上角的路況卡（augmented_road_view），卡片右欄固定是前車
       if (!state.hideHudCard)
         Positioned(bottom: bottom, left: cardLeft, width: width,
           height: cardH,
-          child: DashboardCard(state: state, stale: stale))
-      // 無卡片時 TDX 前方車速原本在卡片右欄、會跟著消失 → 在卡片位置底部改顯示一個小膠囊
-      else if (!stale && state.tdxNextSpeedDisplay != null)
-        Positioned(bottom: bottom, left: cardLeft, width: width,
-          child: Center(child: tdxSpeedChip(state, height: (cardH * .32).clamp(30.0, 44.0).toDouble()))),
+          child: DashboardCard(state: state, stale: stale)),
       // 方向燈：儀表卡片左右兩側的箭頭，閃爍（carState.leftBlinker / rightBlinker）
       if (!stale && state.leftBlinker)
         _blinker(left: true, cardLeft: cardLeft, cardW: width, cardH: cardH, bottom: bottom, boxW: box.maxWidth),
@@ -112,33 +104,6 @@ class DashboardHud extends StatelessWidget {
   Widget _badge(String text, Color color) => dashboardBadge(text, color);
 }
 
-/// 無卡片（橫向）時的 TDX 前方車速：「前方車速 72 km/h 順暢」，數字與分級依壅塞上色
-Widget tdxSpeedChip(UIState state, {double height = 36}) {
-  final c = tdxCongestionColor(state.tdxCongestion);
-  final label = switch (state.tdxCongestion) {
-    'smooth' => '順暢', 'slow' => '車多', 'congested' => '壅塞', _ => '',
-  };
-  final small = TextStyle(fontSize: height * .34, color: Colors.white70, height: 1);
-  return Container(
-    height: height,
-    padding: EdgeInsets.symmetric(horizontal: height * .4),
-    decoration: BoxDecoration(color: const Color(0xDC0D171C), borderRadius: BorderRadius.circular(height / 2),
-      border: Border.all(color: c.withAlpha(120))),
-    child: Row(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.center, children: [
-      Text('前方車速', style: small),
-      SizedBox(width: height * .25),
-      Text('${state.tdxNextSpeedDisplay}', style: TextStyle(fontSize: height * .58, color: c,
-          fontWeight: FontWeight.w700, height: 1)),
-      SizedBox(width: height * .12),
-      Text(state.isMetric ? 'km/h' : 'mph', style: small),
-      if (label.isNotEmpty) ...[
-        SizedBox(width: height * .25),
-        Text(label, style: small.copyWith(color: c, fontWeight: FontWeight.w600)),
-      ],
-    ]),
-  );
-}
-
 /// 狀態徽章文字與顏色（儀表介面與直向下方儀表區共用）
 (String, Color) dashboardStatus(UIState state, bool stale) {
   final status = stale ? (state.dataLagging ? '資料延遲' : '資料中斷') : switch (state.status) {
@@ -158,19 +123,16 @@ Widget dashboardBadge(String text, Color color) => Container(
   child: Text(text, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
 );
 
-/// 儀表卡片本體：MAX ｜ 車速儀表 ｜ 右欄（前車 或 TDX 前方車速）。字級依卡片高度等比。
-/// [tdxInRightColumn] = false 時右欄固定顯示前車距離 / 車頭時距（直向版 TDX 另有獨立一列）。
+/// 儀表卡片本體：MAX ｜ 車速儀表 ｜ 右欄（前車距離 / 車頭時距）。字級依卡片高度等比。
+/// 2026-11-12 版面統一：直向、橫向內容相同；TDX 前方車速一律在路況卡（TdxRouteCard），
+/// 實驗模式一律看道路畫面上的燒瓶圖示（卡片角落的 EXP 拿掉）。
 class DashboardCard extends StatelessWidget {
   final UIState state;
   final bool stale;
-  final bool tdxInRightColumn;
   /// 內容（字級、圖示）依此高度計算；卡片實際高度可以比它矮（直向：卡片變矮、字不變小）。
   /// null = 依卡片實際高度（橫向，原本行為）。
   final double? contentHeight;
-  /// 實驗模式時在卡片左上角顯示小的 EXP 標記（直向用；不佔額外高度）
-  final bool expBadge;
-  const DashboardCard({super.key, required this.state, this.stale = false,
-    this.tdxInRightColumn = true, this.contentHeight, this.expBadge = false});
+  const DashboardCard({super.key, required this.state, this.stale = false, this.contentHeight});
 
   @override
   Widget build(BuildContext context) {
@@ -184,9 +146,7 @@ class DashboardCard extends StatelessWidget {
       final lineH = DefaultTextStyle.of(context).style.height ?? 1.25;
       final textH = .42 * h + (.10 + .065) * h * lineH;
       final gaps = math.min(.16 * h, math.max(0.0, boxH - textH - 1));
-      return DecoratedBox(decoration: BoxDecoration(
-        color: const Color(0xDC0D171C), borderRadius: BorderRadius.circular(math.min(h * .17, boxH * .5)),
-        border: Border.all(color: const Color(0x335DE3D4))),
+      return DecoratedBox(decoration: opviewPanel(radius: math.min(h * .17, boxH * .5)),
         child: Stack(children: [Positioned.fill(child: Row(children: [
           Expanded(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
             Text('MAX', style: TextStyle(color: color, fontSize: h * .10,
@@ -219,53 +179,23 @@ class DashboardCard extends StatelessWidget {
           )),
           Expanded(child: _rightColumn(h, color)),
         ])),
-          // EXP：卡片左上角（圓角內側），MAX 標籤上方，不佔版面高度
-          if (expBadge && state.experimentalMode && !stale)
-            Positioned(left: h * .15, top: h * .07, child: Container(
-              padding: EdgeInsets.symmetric(horizontal: h * .035),
-              decoration: BoxDecoration(borderRadius: BorderRadius.circular(h * .04),
-                border: Border.all(color: Colors.amberAccent.withAlpha(200))),
-              child: Text('EXP', style: TextStyle(fontSize: h * .075, color: Colors.amberAccent,
-                fontWeight: FontWeight.w800, letterSpacing: 1, height: 1.2)))),
         ]));
     });
   }
 
-  // 右欄：有 TDX 前方車速時，小車圖示改成「前方車速」文字、下方顯示車速（依壅塞分級上色）；
-  // 前車距離 / 車頭時距縮成一行保留在最下面。沒有 TDX 資料時維持原本的小車 + 距離。
+  // 右欄：前車距離 / 車頭時距（直向、橫向相同；TDX 前方車速在路況卡）
   Widget _rightColumn(double h, Color color) {
-    final tdxSpeed = stale || !tdxInRightColumn ? null : state.tdxNextSpeedDisplay;
     final dist = !stale ? state.leadDistance : null;
     final headway = !stale ? state.leadHeadway : null;
-    if (tdxSpeed == null) {
-      return FittedBox(fit: BoxFit.scaleDown, child: Column(mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.directions_car_outlined, color: color, size: h * .18),
-        Text(dist != null ? '${dist.round()} m' : '—',
-            style: TextStyle(fontSize: h * .12, fontWeight: FontWeight.w600)),
-        Text(headway != null ? '${headway.toStringAsFixed(1)} s' : '—',
-            style: TextStyle(fontSize: h * .10, color: Colors.white60)),
-      ]));
-    }
-    final tdxColor = tdxCongestionColor(state.tdxCongestion);
-    final lead = dist == null ? null
-        : headway == null ? '${dist.round()} m' : '${dist.round()} m · ${headway.toStringAsFixed(1)} s';
-    return FittedBox(fit: BoxFit.scaleDown, child: Column(
-      mainAxisAlignment: MainAxisAlignment.center, mainAxisSize: MainAxisSize.min, children: [
-      // 標籤與 MAX 同層級（淡白），只有數字帶分級色
-      Text('前方車速', style: TextStyle(fontSize: h * .10, color: Colors.white70,
-          fontWeight: FontWeight.w600, letterSpacing: 1, height: 1.2)),
-      Text('$tdxSpeed', style: TextStyle(fontSize: h * .22, color: tdxColor,
-          fontWeight: FontWeight.w700, height: 1.05)),
-      Text(state.isMetric ? 'km/h' : 'mph',
-          style: TextStyle(fontSize: h * .08, color: Colors.white70, height: 1.2)),
-      if (lead != null) ...[
-        SizedBox(height: h * .03),
-        Text(lead, style: TextStyle(fontSize: h * .08, color: Colors.white60, height: 1.2)),
-      ],
+    return FittedBox(fit: BoxFit.scaleDown, child: Column(mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisSize: MainAxisSize.min, children: [
+      Icon(Icons.directions_car_outlined, color: color, size: h * .18),
+      Text(dist != null ? '${dist.round()} m' : '—',
+          style: TextStyle(fontSize: h * .12, fontWeight: FontWeight.w600)),
+      Text(headway != null ? '${headway.toStringAsFixed(1)} s' : '—',
+          style: TextStyle(fontSize: h * .10, color: Colors.white60)),
     ]));
   }
-
 }
 
 class _GaugePainter extends CustomPainter {

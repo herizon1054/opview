@@ -39,3 +39,5 @@ flutter:
   # 起步提醒的嗶嗶聲（beep.wav）；Google 語音用手機的文字轉語音，不需要音檔
   assets:
     - assets/sounds/
+    # 實驗模式圖示（openpilot selfdrive/assets/icons/experimental.png）
+    - assets/icons/

@@ -176,6 +176,29 @@ class UIState extends ChangeNotifier {
     return '$loc: ${_tdxEvents.map((e) => e.description).join(' / ')}';
   }
 
+  /// 路況卡（表格式，2026-11-13）用：每個事件拆成 (內容, 距離)。core 的描述格式是「種類 距離 內容」
+  /// （例：「施工 3.0公里 外側車道封閉」）；不符合格式的整段當內容、距離空白。
+  static final _evRe = RegExp(r'^(\S+) (\d+(?:\.\d+)?)(公尺|公里)(?: (.*))?$');
+  List<({String what, String dist})> get tdxEventRows {
+    if (!_tdxAlive || !isConnected) return const [];
+    return [
+      for (final e in _tdxEvents)
+        if (_evRe.firstMatch(e.description) case final m?)
+          (what: [m.group(1)!, if ((m.group(4) ?? '').isNotEmpty) m.group(4)!].join(' '),
+           dist: '${m.group(2)} ${m.group(3) == '公里' ? 'km' : 'm'}')
+        else
+          (what: e.description, dist: ''),
+    ];
+  }
+
+  /// 路況卡用的回堵數字（車速為目前單位），沒有為 null
+  ({double d, double len, bool open, int avg, int min})? get tdxQueueInfo {
+    final q = _tdxAlive ? _tdxQueue : null;
+    if (q == null) return null;
+    int u(int kph) => isMetric ? kph : (kph * kmToMile).round();
+    return (d: q.d, len: q.len, open: q.open, avg: u(q.avg), min: u(q.min));
+  }
+
   /// 近距離警示觸發中（低信心目標在 2–3 m 內）：事件列顯示「碰撞注意」，優先於 TDX 事件。
   /// 斷線時不顯示。空字串 = 沒有。
   String get collisionText {

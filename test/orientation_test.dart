@@ -89,7 +89,7 @@ void main() {
     expect(tester.takeException(), isNull);
     final videoH = 390 * 1208 / 1928;
     expect(tester.getRect(find.text('前方車速')).top, greaterThan(videoH));
-    expect(find.text('TDX 順暢'), findsOneWidget);
+    expect(find.text('順暢'), findsOneWidget); // 2026-11-13 表格式路況卡：分級色塊
     // 2026-11-13：直向事件收進路況卡（道路畫面下方），道路畫面上方只剩碰撞注意
     expect(tester.getRect(find.textContaining('施工').first).top, greaterThan(videoH));
     // comma 事件（alert）貼在道路畫面底部，不在下方資訊區

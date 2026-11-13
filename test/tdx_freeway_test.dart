@@ -182,6 +182,22 @@ void main() {
       s.dispose();
     });
 
+    test('event rows split into (what, dist); card distance format', () {
+      final s = createMockUIState()..applyTdx({'nextSpeed': 40, 'congestion': 'slow', 'events': [
+        {'description': '施工 3.0公里 外側車道封閉', 'isCurrentSection': false},
+        {'description': '事故 500公尺', 'isCurrentSection': false},
+        {'description': '其他格式的事件', 'isCurrentSection': false},
+      ]});
+      expect(s.tdxEventRows, [
+        (what: '施工 外側車道封閉', dist: '3.0 km'),
+        (what: '事故', dist: '500 m'),
+        (what: '其他格式的事件', dist: ''),
+      ]);
+      expect(tdxCardDist(480), '500 m');
+      expect(tdxCardDist(1520), '1.5 km');
+      s.dispose();
+    });
+
     test('drop beep setting persists (default on)', () async {
       final v = ViewerSettings();
       await v.load();
@@ -209,18 +225,25 @@ void main() {
       await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
           home: AugmentedRoadView(uiState: state, settings: settings)));
       await tester.pump(const Duration(milliseconds: 50));
-      final inCard = find.descendant(of: find.byType(TdxRouteCard), matching: find.textContaining('車速驟降'));
+      // 2026-11-13 表格式路況卡：每行 標籤｜內容｜距離
+      Finder card(String t) => find.descendant(of: find.byType(TdxRouteCard), matching: find.text(t));
+      final dropInCard = find.descendant(of: find.byType(TdxRouteCard), matching: find.textContaining('降至 25 km/h'));
       final inBanner = find.descendant(of: find.byType(TdxMarquee), matching: find.textContaining('車速驟降'));
+      expect(card('車道'), findsOneWidget);
+      expect(card('1.8 km'), findsOneWidget); // 車道距離在右欄
+      expect(card('1.5 km'), findsOneWidget); // 回堵 / 驟降距離在右欄
       if (name == 'portrait') {
-        // 直向：車速驟降取代路況卡的回堵那一行，上方警示列不顯示
-        expect(inCard, findsOneWidget);
+        // 直向：「驟降」取代「回堵」那一行（黃底），上方警示列不顯示
+        expect(card('驟降'), findsOneWidget);
+        expect(card('回堵'), findsNothing);
+        expect(dropInCard, findsOneWidget);
         expect(inBanner, findsNothing);
-        expect(find.textContaining('回堵 1.5公里起'), findsNothing);
       } else {
         // 橫向：上方警示列（黃），路況卡照常顯示回堵
         expect(inBanner, findsWidgets);
-        expect(inCard, findsNothing);
-        expect(find.textContaining('回堵 1.5公里起 3.5公里'), findsWidgets);
+        expect(card('回堵'), findsOneWidget);
+        expect(card('3.5 km'), findsOneWidget);
+        expect(dropInCard, findsNothing);
       }
       expect(find.text('92'), findsWidgets);
       expect(find.text('38'), findsWidgets);

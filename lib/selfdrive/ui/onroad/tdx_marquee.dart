@@ -20,8 +20,11 @@ class TdxMarquee extends StatefulWidget {
   final bool warn;
   /// 無外框、靠左、填滿寬度（嵌在直向路況卡裡用，2026-11-13）
   final bool bare;
+  /// bare 模式不畫前面的圖示（路況卡已有「事件」標籤）
+  final bool showIcon;
   const TdxMarquee({super.key, required this.text, this.fontSize = 17.25,  // 12.5 × 1.15 × 1.2
-    this.maxWidth = 420, this.speed = 50, this.collision = false, this.warn = false, this.bare = false});
+    this.maxWidth = 420, this.speed = 50, this.collision = false, this.warn = false, this.bare = false,
+    this.showIcon = true});
 
   @override
   State<TdxMarquee> createState() => _TdxMarqueeState();
@@ -84,7 +87,7 @@ class _TdxMarqueeState extends State<TdxMarquee> with SingleTickerProviderStateM
     final textWidth = painter.width;
     painter.dispose();
     final available = widget.bare
-        ? maxPill - _icon - _iconGap
+        ? maxPill - (widget.showIcon ? _icon + _iconGap : 0)
         : maxPill - 2 * _padH - _icon - _iconGap - 2; // 2 = 邊框
     final scrolling = textWidth > available;
     // 動畫控制不能在 build 中途改，排到這一幀之後
@@ -111,7 +114,8 @@ class _TdxMarqueeState extends State<TdxMarquee> with SingleTickerProviderStateM
         color: widget.collision ? Colors.white : widget.warn ? const Color(0xFF1A1300) : tdxSlowColor.withAlpha(210), size: _icon);
     if (widget.bare) {
       return Align(alignment: Alignment.centerLeft, child: Row(mainAxisSize: MainAxisSize.min, children: [
-        icon, const SizedBox(width: _iconGap), body,
+        if (widget.showIcon) ...[icon, const SizedBox(width: _iconGap)],
+        body,
       ]));
     }
     return Center(child: Container(

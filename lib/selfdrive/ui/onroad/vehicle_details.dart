@@ -10,6 +10,9 @@ class VehicleDetails extends StatelessWidget {
   /// 上緣（橫向右上角有實驗模式圖示時往下讓位）
   final double top;
   const VehicleDetails({super.key, required this.state, required this.stale, this.top = 12});
+
+  /// 框的高度（上下內距 10 + 兩行 11 × 1.5 + 邊框），起步提醒圈排在它下面
+  static const height = 10 * 2 + 11 * 1.5 * 2 + 2;
   @override
   Widget build(BuildContext context) => IgnorePointer(child: Align(
     alignment: Alignment.topRight,

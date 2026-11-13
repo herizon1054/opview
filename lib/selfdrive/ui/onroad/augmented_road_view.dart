@@ -417,8 +417,14 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
         final expSize = portrait ? 34.0 : (88 * scale).clamp(36.0, 56.0).toDouble();
         final hudH = screenH - 2 * borderSize;
         final expTop = portrait ? hudH * .35 - expSize / 2 : _rightTop;
-        // 橫向右側欄位（起步提醒圈、車輛資訊框）從這裡往下排
+        // 右上角由上往下：全螢幕叫回按鈕（橫向全螢幕）→ 實驗模式圖示（橫向）→ 車輛資訊框（詳細介面）→ 起步提醒圈，
+        // 上方警示列出現時一起往下讓位（2026-11-13：原本資訊框與起步提醒圈都貼右上角 12 dp，會疊在一起）
         final rightBelow = !portrait && expShown ? _rightTop + expSize + 8 : null;
+        final bannerOn = widget.uiState.eventBannerFor(portrait: portrait).text.isNotEmpty;
+        final bannerBottom = portrait ? 8.0 + 16 * 2.2 : _landscapeBannerBottom;
+        final detailed = widget.settings?.layout == ViewerLayout.detailed;
+        final detailsTop = max(rightBelow ?? (portrait ? 12.0 : _rightTop), bannerOn ? bannerBottom + 6 : 0.0);
+        final stopGoMinTop = detailed ? detailsTop + VehicleDetails.height + 8 : (rightBelow ?? 0.0);
 
         // recompute transform only when inputs change
         final transform = _getTransform(screenW, screenH);
@@ -477,7 +483,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                                 if (!portrait) DashboardHud(state: widget.uiState, stale: _stale),
                               ] else if (!_stale) HudRenderer(uiState: widget.uiState, scale: scale),
                               if (widget.settings?.layout == ViewerLayout.detailed)
-                                VehicleDetails(state: widget.uiState, stale: _stale, top: rightBelow ?? 12),
+                                VehicleDetails(state: widget.uiState, stale: _stale, top: detailsTop),
                             ]),
                           ),
                         ],
@@ -494,7 +500,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
                         if (!widget.pip && !_stale && (StopGoAlerts.instance.greenLightEnabled ||
                             StopGoAlerts.instance.leadDepartEnabled || StopGoAlerts.instance.standstillTimerEnabled))
                           Positioned.fill(child: StopGoOverlay(state: widget.uiState, screenH: screenH,
-                              minTop: rightBelow ?? 0)),
+                              minTop: stopGoMinTop)),
                         // 實驗模式圖示：道路畫面左側中上
                         if (expShown)
                           Positioned(top: expTop, left: portrait ? 12 : null, right: portrait ? null : 12,

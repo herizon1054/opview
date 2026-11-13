@@ -27,7 +27,7 @@ void main() {
     final s = createMockUIState()
       ..applyTdx({'nextSpeed': 62, 'congestion': 'smooth',
         'events': [{'description': '施工 外側車道', 'isCurrentSection': true}]});
-    expect(s.eventBanner, (text: '目前: 施工 外側車道', collision: false, warn: false));
+    expect(s.eventBanner, (text: '目前: 施工 外側車道', collision: false, warn: false, disengage: false));
     _trigger();
     expect(s.eventBanner.collision, isTrue);
     expect(s.eventBanner.text, '碰撞注意  前方 1.5 m');

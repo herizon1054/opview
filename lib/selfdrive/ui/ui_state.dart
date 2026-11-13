@@ -208,18 +208,57 @@ class UIState extends ChangeNotifier {
     return '碰撞注意  前方 ${(t.dRel < 0 ? 0 : t.dRel).toStringAsFixed(1)} m';
   }
 
-  /// 事件位置要顯示的文字與樣式：碰撞注意（紅）> 國道車速驟降（黃）> TDX 事件
-  ({String text, bool collision, bool warn}) get eventBanner => eventBannerFor(portrait: false);
+  // ---- 巡航解除提示（2026-11-14）----
+  // 行駛中 openpilot 從啟用變成未啟用（selfdriveState.enabled true → false）：滴滴兩聲（app.dart）+ 警示列「巡航解除」。
+  // 踩油門介入時 enabled 仍是 true（state = overriding），不會觸發；停車中（vEgo < disengageMinSpeed）解除不提示。
+  // 斷線重連後的第一筆 selfdriveState 不算（距離上一筆超過 disengageMaxGap）。
+
+  /// 顯示設定「巡航解除提示」（app.dart 同步）；關閉時不發事件、不顯示
+  bool disengageAlert = true;
+  static const disengageBannerText = '巡航解除';
+  static const disengageShowFor = Duration(seconds: 2);
+  static const disengageMinSpeed = 1.0; // m/s（約 3.6 km/h）
+  static const disengageMaxGap = Duration(seconds: 2);
+  /// 測試用：替換目前時間
+  @visibleForTesting
+  DateTime Function() clock = DateTime.now;
+  final _disengageEvents = StreamController<void>.broadcast();
+  /// 巡航解除時發出一次（app.dart 播滴滴兩聲）
+  Stream<void> get disengageEvents => _disengageEvents.stream;
+  DateTime? _lastSelfdriveAt;
+  DateTime? _disengageUntil;
+
+  void _checkDisengage(bool wasEnabled, bool nowEnabled) {
+    final now = clock();
+    final fresh = _lastSelfdriveAt == null || now.difference(_lastSelfdriveAt!) > disengageMaxGap;
+    _lastSelfdriveAt = now;
+    if (fresh || !disengageAlert || !wasEnabled || nowEnabled || vEgo < disengageMinSpeed) return;
+    _disengageUntil = now.add(disengageShowFor);
+    _disengageEvents.add(null);
+  }
+
+  /// 警示列的「巡航解除」（觸發後 disengageShowFor 內），沒有為空字串
+  String get disengageText {
+    final u = _disengageUntil;
+    if (u == null || !disengageAlert || !isConnected || !clock().isBefore(u)) return '';
+    return disengageBannerText;
+  }
+
+  /// 事件位置要顯示的文字與樣式：碰撞注意（紅）> 巡航解除（藍）> 國道車速驟降（黃）> TDX 事件
+  ({String text, bool collision, bool warn, bool disengage}) get eventBanner => eventBannerFor(portrait: false);
 
   /// 儀表介面（直向、橫向）：TDX 事件、車速驟降都在路況卡裡（2026-11-13），道路畫面上方的警示列只剩碰撞注意。
   /// 原版介面沒有路況卡：碰撞注意 > 車速驟降 > TDX 事件都在警示列。[portrait] 保留給呼叫端，目前兩個方向相同。
-  ({String text, bool collision, bool warn}) eventBannerFor({required bool portrait}) {
+  /// 巡航解除兩種介面都在警示列（碰撞注意之後）。
+  ({String text, bool collision, bool warn, bool disengage}) eventBannerFor({required bool portrait}) {
     final c = collisionText;
-    if (c.isNotEmpty) return (text: c, collision: true, warn: false);
-    if (modernOverlay) return (text: '', collision: false, warn: false);
+    if (c.isNotEmpty) return (text: c, collision: true, warn: false, disengage: false);
+    final off = disengageText;
+    if (off.isNotEmpty) return (text: off, collision: false, warn: false, disengage: true);
+    if (modernOverlay) return (text: '', collision: false, warn: false, disengage: false);
     final d = tdxDropText;
-    if (d.isNotEmpty) return (text: d, collision: false, warn: true);
-    return (text: isConnected ? tdxEventText : '', collision: false, warn: false);
+    if (d.isNotEmpty) return (text: d, collision: false, warn: true, disengage: false);
+    return (text: isConnected ? tdxEventText : '', collision: false, warn: false, disengage: false);
   }
 
   String _spd(int kph) => '${isMetric ? kph : (kph * kmToMile).round()}';
@@ -378,7 +417,9 @@ class UIState extends ChangeNotifier {
   }
 
   void applySelfdriveState(Map<String, dynamic> data) {
+    final wasEnabled = enabled;
     enabled = data['enabled'] as bool? ?? false;
+    _checkDisengage(wasEnabled, enabled);
     experimentalMode = data['experimentalMode'] as bool? ?? false;
     alertText1 = data['alertText1'] as String? ?? '';
     alertText2 = data['alertText2'] as String? ?? '';

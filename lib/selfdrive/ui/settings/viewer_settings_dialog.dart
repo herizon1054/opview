@@ -76,7 +76,7 @@ class ViewerSettingsDialog extends StatelessWidget {
               secondary: const Icon(Icons.trending_down_rounded, color: Color(0xFFF2B731)),
               title: const Text('國道車速驟降嗶聲'),
               subtitle: const Text('國道上前方 2 公里內開始回堵（低於 40 km/h），且比本車慢 40 km/h 以上時，'
-                '顯示黃色「車速驟降 前方1.5公里 降至25km」並嗶一聲（3 分鐘內不重複；直向在路況卡、橫向在上方警示列）。'
+                '顯示黃色「車速驟降 前方1.5公里 降至25km」並嗶一聲（3 分鐘內不重複；儀表介面在路況卡，原版介面在上方警示列）。'
                 '關閉只取消聲音，畫面照常顯示。'
                 '國道另顯示回堵長度與前方偵測器的各車道車速｜直向、橫向。'),
               value: settings.tdxDropBeep, onChanged: settings.setTdxDropBeep),
@@ -161,6 +161,13 @@ class ViewerSettingsDialog extends StatelessWidget {
               '道路畫面顯示紅色箭頭、事件位置顯示「碰撞注意」並嗶一聲（30 秒內只嗶一次；不受起步提醒聲音設定影響）｜直向、橫向。'
               '需要 comma 端 webrtcd 已更新（送出 leadsV3）；僅供參考，不會控制車輛。'),
             value: settings.proximityAlert, onChanged: settings.setProximityAlert),
+          SwitchListTile(contentPadding: EdgeInsets.zero,
+            secondary: const Icon(Icons.pause_circle_filled_rounded, color: Color(0xFF4A90D9)),
+            title: const Text('巡航解除提示'),
+            subtitle: const Text('行駛中 openpilot 解除（踩煞車、按取消、系統解除）時滴滴兩聲（類似豐田解除定速的聲音），'
+              '道路畫面上方顯示藍色「巡航解除」2 秒｜直向、橫向。踩油門介入不算解除；停車中解除不提示。'
+              '不受起步提醒聲音設定影響。'),
+            value: settings.disengageAlert, onChanged: settings.setDisengageAlert),
           if (system.brightnessSupported.value)
           SwitchListTile(contentPadding: EdgeInsets.zero, title: const Text('亮度跟隨系統'),
             value: settings.brightness == null,

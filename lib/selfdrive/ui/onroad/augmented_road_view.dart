@@ -338,7 +338,8 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
   // 原版介面放在 header（車速 / MAX 框）下方。
   // events.py 的 alert 不在這裡，維持 stock AlertRenderer（small / mid 底部橫幅、full 全螢幕）。
   // 2026-11-12 版面統一：警示列直向、橫向都疊在道路畫面上方置中（直向原本在下方資訊區）。
-  // 碰撞注意（紅）> 車速驟降（黃）> TDX 事件；國道資訊改在路況卡（_routeCard / PortraitPanel）。
+  // 碰撞注意（紅）> 巡航解除（藍，2026-11-14）> 車速驟降（黃）> TDX 事件；國道資訊改在路況卡（_routeCard / PortraitPanel）。
+  // 儀表介面的車速驟降、TDX 事件在路況卡，警示列只有碰撞注意與巡航解除。
   Widget _tdxMarquee(double scale, double screenW, bool portrait) {
     final modern = widget.uiState.modernOverlay;
     final banner = widget.uiState.eventBannerFor(portrait: portrait);
@@ -349,7 +350,7 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
       top: modern ? (portrait ? 8 : 12) : 300 * scale + 6,
       left: 12, right: 12,
       child: IgnorePointer(child: RepaintBoundary(
-        child: TdxMarquee(text: banner.text, collision: banner.collision, warn: banner.warn,
+        child: TdxMarquee(text: banner.text, collision: banner.collision, warn: banner.warn, disengage: banner.disengage,
           fontSize: portrait ? 16 : 17.25 * 1.3, maxWidth: maxW))));
   }
 

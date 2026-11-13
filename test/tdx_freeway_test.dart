@@ -151,10 +151,10 @@ void main() {
       expect(s.tdxLanes!.speeds, [92, 85, 38]);
       // 2026-11-13 格式；直向的車速驟降在路況卡，警示列只剩 TDX 事件
       expect(s.tdxDropText, '車速驟降 前方1.5公里 降至25km');
-      expect(s.eventBanner, (text: '車速驟降 前方1.5公里 降至25km', collision: false, warn: true));
+      expect(s.eventBanner, (text: '車速驟降 前方1.5公里 降至25km', collision: false, warn: true, disengage: false));
       s.modernOverlay = true;
-      expect(s.eventBannerFor(portrait: true), (text: '', collision: false, warn: false));
-      expect(s.eventBannerFor(portrait: false), (text: '', collision: false, warn: false));
+      expect(s.eventBannerFor(portrait: true), (text: '', collision: false, warn: false, disengage: false));
+      expect(s.eventBannerFor(portrait: false), (text: '', collision: false, warn: false, disengage: false));
       s.modernOverlay = false;
       s.applyTdx(data(qd: 1200));
       await Future<void>.delayed(Duration.zero);

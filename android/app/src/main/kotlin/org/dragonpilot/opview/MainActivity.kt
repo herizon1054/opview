@@ -377,10 +377,20 @@ class MainActivity: FlutterActivity() {
         return makeClip(toneWav(1000.0, 150), "國道車速驟降").also { tdxDropClip = it }
     }
 
-    /** 單一正弦波 WAV（16-bit mono 44.1 kHz，頭尾 6 ms 淡入淡出） */
-    private fun toneWav(freq: Double, ms: Int): ByteArray {
+    /** 巡航解除：滴滴兩聲（2.0 kHz、80 ms ×2，間隔 70 ms），類似豐田解除定速的提示音；
+     *  音高比起步提醒（beep.wav 約 1 kHz 雙聲）、近距離警示（1.6 kHz 單聲）、車速驟降（1.0 kHz 單聲）都高，聽得出差別 */
+    private var disengageClip: Clip? = null
+    private fun ensureDisengageClip(): Clip? {
+        disengageClip?.let { return it }
+        return makeClip(toneWav(2000.0, 80, count = 2, gapMs = 70), "巡航解除").also { disengageClip = it }
+    }
+
+    /** 正弦波 WAV（16-bit mono 44.1 kHz，每聲頭尾 6 ms 淡入淡出）；[count] 聲、每聲之間靜音 [gapMs] */
+    private fun toneWav(freq: Double, ms: Int, count: Int = 1, gapMs: Int = 0): ByteArray {
         val rate = 44100
-        val n = rate * ms / 1000
+        val tone = rate * ms / 1000
+        val gap = rate * gapMs / 1000
+        val n = tone * count + gap * (count - 1)
         val fade = rate * 6 / 1000.0
         val data = java.nio.ByteBuffer.allocate(44 + n * 2).order(java.nio.ByteOrder.LITTLE_ENDIAN)
         data.put("RIFF".toByteArray(Charsets.US_ASCII)).putInt(36 + n * 2).put("WAVE".toByteArray(Charsets.US_ASCII))
@@ -388,8 +398,9 @@ class MainActivity: FlutterActivity() {
             .putInt(rate * 2).putShort(2).putShort(16)
         data.put("data".toByteArray(Charsets.US_ASCII)).putInt(n * 2)
         for (i in 0 until n) {
-            val env = minOf(1.0, i / fade, (n - 1 - i) / fade)
-            data.putShort((Math.sin(2.0 * Math.PI * freq * i / rate) * env * 0.85 * Short.MAX_VALUE).toInt().toShort())
+            val k = i % (tone + gap) // 這一聲裡的第幾個取樣；>= tone 是兩聲之間的靜音
+            val env = if (k >= tone) 0.0 else minOf(1.0, k / fade, (tone - 1 - k) / fade)
+            data.putShort((Math.sin(2.0 * Math.PI * freq * k / rate) * env * 0.85 * Short.MAX_VALUE).toInt().toShort())
         }
         return data.array()
     }
@@ -1031,6 +1042,16 @@ class MainActivity: FlutterActivity() {
                     val clip = ensureTdxDropClip()
                     if (clip != null && playClip(clip, "國道車速驟降") { beepAlert() }) {
                         result.success("單聲嗶播放中；${mediaVolumeNote()}")
+                    } else {
+                        val err = beepAlert()
+                        if (err == null) result.success("改用程式產生的嗶嗶聲；${mediaVolumeNote()}")
+                        else result.error("beep", err, null)
+                    }
+                }
+                "disengageBeep" -> {
+                    val clip = ensureDisengageClip()
+                    if (clip != null && playClip(clip, "巡航解除") { beepAlert() }) {
+                        result.success("滴滴兩聲播放中；${mediaVolumeNote()}")
                     } else {
                         val err = beepAlert()
                         if (err == null) result.success("改用程式產生的嗶嗶聲；${mediaVolumeNote()}")

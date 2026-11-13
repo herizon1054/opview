@@ -22,6 +22,7 @@ class ViewerSettings extends ChangeNotifier {
   bool rainbowPath = false; // 彩虹模式：儀表介面的行駛路徑改為流動彩虹色
   bool hideHudCard = false; // 儀表介面不顯示儀表卡片（直向空間讓給 LINE / 停車）
   bool tdxDropBeep = true; // 國道車速驟降嗶聲（TDX：前方 2 公里內回堵，且比本車慢 40 km/h 以上）
+  bool disengageAlert = true; // 巡航解除提示：行駛中 openpilot 從啟用變成未啟用 → 滴滴兩聲 + 警示列「巡航解除」2 秒
   bool proximityAlert = false; // 近距離警示：20–60 km/h、低信心目標（0.2 ≤ 機率 < 0.5）在路徑 ±0.9 m、車頭 2 m（20 km/h）～3 m（60 km/h）內、連續 5 幀、30 秒內只嗶一次 → 箭頭 + 嗶一聲
   double? brightness;
   int hudEvery = 4; // HUD ~5 Hz when modelV2 is 20 Hz; path and alerts unchanged.
@@ -51,6 +52,7 @@ class ViewerSettings extends ChangeNotifier {
     hideHudCard = prefs.getBool('viewer_hide_hud_card') ?? false;
     proximityAlert = prefs.getBool('viewer_proximity_alert') ?? false;
     tdxDropBeep = prefs.getBool('viewer_tdx_drop_beep') ?? true;
+    disengageAlert = prefs.getBool('viewer_disengage_alert') ?? true;
     final b = prefs.getDouble('viewer_brightness');
     brightness = b != null && b.isFinite && b >= 0 ? b.clamp(.05, 1.0).toDouble() : null;
     hudEvery = prefs.getInt('viewer_hud_every') == 1 ? 1 : 4;
@@ -77,6 +79,9 @@ class ViewerSettings extends ChangeNotifier {
   }
   void setTdxDropBeep(bool value) {
     tdxDropBeep = value; _prefs?.setBool('viewer_tdx_drop_beep', value); notifyListeners();
+  }
+  void setDisengageAlert(bool value) {
+    disengageAlert = value; _prefs?.setBool('viewer_disengage_alert', value); notifyListeners();
   }
   void setProximityAlert(bool value) {
     proximityAlert = value; _prefs?.setBool('viewer_proximity_alert', value); notifyListeners();

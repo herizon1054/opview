@@ -41,6 +41,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
   StreamSubscription<StopGoKind>? _stopGoSub;
   StreamSubscription<ProximityTarget>? _proximitySub;
   StreamSubscription<String>? _tdxDropSub;
+  StreamSubscription<void>? _disengageSub;
   int _lifecycleEpoch = 0;
   AppLifecycleState _lifecycle = AppLifecycleState.resumed;
   bool _inBackground = false; // 背景執行中（保持連線、播放起步語音）
@@ -67,6 +68,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     _uiState.modernOverlay = _settings.layout != ViewerLayout.classic;
     _uiState.rainbowPath = _settings.rainbowPath;
     _uiState.hideHudCard = _settings.hideHudCard;
+    _uiState.disengageAlert = _settings.disengageAlert;
     ProximityAlert.instance.configure(enabled: _settings.proximityAlert);
     StopGoAlerts.instance.configure(greenLight: _settings.greenLightAlert,
         leadDepart: _settings.leadDepartAlert, standstillTimer: _settings.standstillTimer);
@@ -187,6 +189,10 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     _tdxDropSub = _uiState.tdxDropEvents.listen((_) {
       if (_settings.tdx && _settings.tdxDropBeep) playTdxDropBeep();
     });
+    // 巡航解除：滴滴兩聲（開關在顯示設定；關閉時畫面也不顯示，見 UIState.disengageAlert）
+    _disengageSub = _uiState.disengageEvents.listen((_) {
+      if (_settings.disengageAlert) playDisengageBeep();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) ParkingStartup.instance.start();
     });
@@ -197,6 +203,7 @@ class _OpviewAppState extends State<OpviewApp> with WidgetsBindingObserver {
     _stopGoSub?.cancel();
     _proximitySub?.cancel();
     _tdxDropSub?.cancel();
+    _disengageSub?.cancel();
     system.setBackgroundKeepAlive(false);
     WidgetsBinding.instance.removeObserver(this);
     ParkingStartup.instance.stop();

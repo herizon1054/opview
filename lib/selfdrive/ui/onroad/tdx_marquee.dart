@@ -18,13 +18,15 @@ class TdxMarquee extends StatefulWidget {
   final bool collision;
   /// 國道車速驟降：黃底黑字（碰撞注意以外的最高優先）
   final bool warn;
+  /// 巡航解除：藍底白字（同道路畫面未啟用時的外框色系，2026-11-14）
+  final bool disengage;
   /// 無外框、靠左、填滿寬度（嵌在直向路況卡裡用，2026-11-13）
   final bool bare;
   /// bare 模式不畫前面的圖示（路況卡已有「事件」標籤）
   final bool showIcon;
   const TdxMarquee({super.key, required this.text, this.fontSize = 17.25,  // 12.5 × 1.15 × 1.2
     this.maxWidth = 420, this.speed = 50, this.collision = false, this.warn = false, this.bare = false,
-    this.showIcon = true});
+    this.showIcon = true, this.disengage = false});
 
   @override
   State<TdxMarquee> createState() => _TdxMarqueeState();
@@ -42,9 +44,11 @@ class _TdxMarqueeState extends State<TdxMarquee> with SingleTickerProviderStateM
 
   // 文字用 white70（同儀表板次要文字），不用純白
   // 碰撞注意用純白粗體
+  bool get _strong => widget.collision || widget.warn || widget.disengage;
+
   TextStyle get _style => TextStyle(fontSize: widget.fontSize,
-      color: widget.collision ? Colors.white : widget.warn ? const Color(0xFF1A1300) : Colors.white70,
-      fontWeight: widget.collision || widget.warn ? FontWeight.w800 : FontWeight.w500, height: 1.2, letterSpacing: .2);
+      color: widget.collision || widget.disengage ? Colors.white : widget.warn ? const Color(0xFF1A1300) : Colors.white70,
+      fontWeight: _strong ? FontWeight.w800 : FontWeight.w500, height: 1.2, letterSpacing: .2);
 
   @override
   void didUpdateWidget(TdxMarquee old) {
@@ -110,8 +114,10 @@ class _TdxMarqueeState extends State<TdxMarquee> with SingleTickerProviderStateM
         ),
       )));
 
-    final icon = Icon(widget.collision ? Icons.car_crash_rounded : widget.warn ? Icons.trending_down_rounded : Icons.warning_amber_rounded,
-        color: widget.collision ? Colors.white : widget.warn ? const Color(0xFF1A1300) : tdxSlowColor.withAlpha(210), size: _icon);
+    final icon = Icon(widget.collision ? Icons.car_crash_rounded : widget.disengage ? Icons.pause_circle_filled_rounded
+        : widget.warn ? Icons.trending_down_rounded : Icons.warning_amber_rounded,
+        color: widget.collision || widget.disengage ? Colors.white : widget.warn ? const Color(0xFF1A1300)
+        : tdxSlowColor.withAlpha(210), size: _icon);
     if (widget.bare) {
       return Align(alignment: Alignment.centerLeft, child: Row(mainAxisSize: MainAxisSize.min, children: [
         if (widget.showIcon) ...[icon, const SizedBox(width: _iconGap)],
@@ -123,10 +129,12 @@ class _TdxMarqueeState extends State<TdxMarquee> with SingleTickerProviderStateM
       padding: const EdgeInsets.symmetric(horizontal: _padH),
       // 底色 / 邊框沿用儀表板面板（0xDC0D171C + 低透明度 teal 邊框）
       decoration: BoxDecoration(
-        color: widget.collision ? const Color(0xF0C92231) : widget.warn ? const Color(0xF0F2B731) : const Color(0xDC0D171C),
+        color: widget.collision ? const Color(0xF0C92231) : widget.disengage ? const Color(0xF01F5F9E)
+            : widget.warn ? const Color(0xF0F2B731) : const Color(0xDC0D171C),
         borderRadius: BorderRadius.circular(widget.fontSize * 1.1),
-        border: Border.all(color: widget.collision ? Colors.white : widget.warn ? const Color(0xFF1A1300) : const Color(0x335DE3D4),
-            width: widget.collision || widget.warn ? 2 : 1),
+        border: Border.all(color: widget.collision || widget.disengage ? Colors.white
+            : widget.warn ? const Color(0xFF1A1300) : const Color(0x335DE3D4),
+            width: _strong ? 2 : 1),
       ),
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         icon,

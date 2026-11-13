@@ -85,6 +85,20 @@ Future<void> playTdxDropBeep() async {
   debugPrint('[opview] 國道車速驟降提醒聲：$status');
 }
 
+/// 巡航解除：滴滴兩聲（Android 端程式產生 2.0 kHz、80 ms ×2，類似豐田解除定速；不受起步提醒聲音設定影響）
+Future<void> playDisengageBeep() async {
+  String status;
+  try {
+    final r = await _channel.invokeMethod<Object?>('disengageBeep');
+    status = r is String ? r : '已送出';
+  } on PlatformException catch (e) {
+    status = '播放失敗：${e.message}';
+  } on MissingPluginException {
+    return; // 測試 / 非 Android
+  }
+  debugPrint('[opview] 巡航解除提醒聲：$status');
+}
+
 /// 近距離警示：單聲嗶（Android 端程式產生 1.6 kHz、180 ms，與起步提醒的雙聲嗶區隔）
 Future<void> playProximityBeep() async {
   String status;

@@ -77,8 +77,7 @@ Future<void> _showHelp(BuildContext context, String title, String text) => showD
 /// 分組標題
 class _Section extends StatelessWidget {
   final String title;
-  final Widget? trailing;
-  const _Section(this.title, {this.trailing});
+  const _Section(this.title);
   @override
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(top: 14, bottom: 2),
@@ -87,7 +86,6 @@ class _Section extends StatelessWidget {
           color: Theme.of(context).colorScheme.primary, letterSpacing: .5)),
       const SizedBox(width: 8),
       const Expanded(child: Divider(height: 1)),
-      if (trailing != null) trailing!,
     ]),
   );
 }
@@ -105,9 +103,8 @@ class _Opt extends StatelessWidget {
   final Widget? below;
   final VoidCallback? onTap;
   final bool indent;
-  final bool enabled;
   const _Opt({this.icon, required this.title, this.status, this.statusColor, this.help, this.control,
-      this.below, this.onTap, this.indent = false, this.enabled = true});
+      this.below, this.onTap, this.indent = false});
 
   @override
   Widget build(BuildContext context) {
@@ -118,7 +115,7 @@ class _Opt extends StatelessWidget {
             data: const IconThemeData(size: 22), child: icon!)),
         Expanded(child: Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: Column(
           mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(title, style: TextStyle(fontSize: 15, color: enabled ? null : Colors.white38)),
+            Text(title, style: const TextStyle(fontSize: 15)),
             if (status != null && status!.isNotEmpty)
               Text(status!, maxLines: 2, overflow: TextOverflow.ellipsis,
                   style: _muted.copyWith(color: statusColor)),

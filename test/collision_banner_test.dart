@@ -57,13 +57,9 @@ void main() {
       await tester.pumpWidget(app());
       await tester.pump(const Duration(milliseconds: 50));
       expect(find.textContaining('碰撞注意'), findsWidgets);
-      if (name == 'portrait') {
-        // 2026-11-13：直向 TDX 事件在路況卡裡，碰撞注意在道路畫面上方，兩者同時顯示
-        expect(find.descendant(of: find.byType(TdxRouteCard), matching: find.textContaining('施工 外側車道')),
-            findsOneWidget);
-      } else {
-        expect(find.textContaining('施工 外側車道'), findsNothing);
-      }
+      // 2026-11-13：TDX 事件在路況卡裡（直向、橫向），碰撞注意在道路畫面上方，兩者同時顯示
+      expect(find.descendant(of: find.byType(TdxRouteCard), matching: find.textContaining('施工 外側車道')),
+          findsOneWidget);
       expect(tester.takeException(), isNull);
 
       await tester.pumpWidget(const SizedBox.shrink());

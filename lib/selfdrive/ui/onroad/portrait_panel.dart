@@ -102,8 +102,8 @@ class PortraitPanel extends StatelessWidget {
       final w = box.maxWidth;
       final modern = state.modernOverlay;
       // 路況卡（前方車速＋國道資訊），高度依內容行數
-      final routeH = modern && !stale && TdxRouteCard.visible(state, portrait: true)
-          ? TdxRouteCard.heightFor(state, fontZoom, portrait: true) : 0.0;
+      final routeH = modern && !stale && TdxRouteCard.visible(state, withAlerts: true)
+          ? TdxRouteCard.heightFor(state, fontZoom, withAlerts: true) : 0.0;
 
       // 卡片：內容高度（字級依此）＝ 寬度的 0.42 × 0.624 × 1.2（上限約 113），卡片實際高度 × cardBoxTrim；
       // 剩餘高度不夠時再一起縮（短螢幕不溢出）
@@ -152,7 +152,7 @@ class PortraitPanel extends StatelessWidget {
             if (routeH > 0) ...[
               const SizedBox(height: gap),
               SizedBox(key: const ValueKey('route'), height: routeH,
-                  child: TdxRouteCard(state: state, scale: fontZoom, portrait: true)),
+                  child: TdxRouteCard(state: state, scale: fontZoom, withAlerts: true)),
             ],
             if (lineH > 0) ...[
               const SizedBox(height: 8),

@@ -142,7 +142,8 @@ void main() {
     };
 
     test('queue / lanes text, drop banner priority and one beep per 3 minutes', () async {
-      final s = createMockUIState(vEgo: 90 / 3.6)..modernOverlay = true; // 直向路況卡只在儀表介面
+      // 原版介面：警示列依優先順序顯示；儀表介面（直向、橫向）只剩碰撞注意，其他都在路況卡
+      final s = createMockUIState(vEgo: 90 / 3.6)..modernOverlay = false;
       final beeps = <String>[];
       final sub = s.tdxDropEvents.listen(beeps.add);
       s.applyTdx(data());
@@ -151,7 +152,10 @@ void main() {
       // 2026-11-13 格式；直向的車速驟降在路況卡，警示列只剩 TDX 事件
       expect(s.tdxDropText, '車速驟降 前方1.5公里 降至25km');
       expect(s.eventBanner, (text: '車速驟降 前方1.5公里 降至25km', collision: false, warn: true));
-      expect(s.eventBannerFor(portrait: true), (text: '', collision: false, warn: false)); // 直向：都在路況卡
+      s.modernOverlay = true;
+      expect(s.eventBannerFor(portrait: true), (text: '', collision: false, warn: false));
+      expect(s.eventBannerFor(portrait: false), (text: '', collision: false, warn: false));
+      s.modernOverlay = false;
       s.applyTdx(data(qd: 1200));
       await Future<void>.delayed(Duration.zero);
       expect(beeps.length, 1); // 持續中不重複
@@ -232,19 +236,11 @@ void main() {
       expect(card('車道'), findsOneWidget);
       expect(card('1.8 km'), findsOneWidget); // 車道距離在右欄
       expect(card('1.5 km'), findsOneWidget); // 回堵 / 驟降距離在右欄
-      if (name == 'portrait') {
-        // 直向：「驟降」取代「回堵」那一行（黃底），上方警示列不顯示
-        expect(card('驟降'), findsOneWidget);
-        expect(card('回堵'), findsNothing);
-        expect(dropInCard, findsOneWidget);
-        expect(inBanner, findsNothing);
-      } else {
-        // 橫向：上方警示列（黃），路況卡照常顯示回堵
-        expect(inBanner, findsWidgets);
-        expect(card('回堵'), findsOneWidget);
-        expect(card('3.5 km'), findsOneWidget);
-        expect(dropInCard, findsNothing);
-      }
+      // 直向、橫向相同：「驟降」取代「回堵」那一行（黃底），上方警示列不顯示
+      expect(card('驟降'), findsOneWidget);
+      expect(card('回堵'), findsNothing);
+      expect(dropInCard, findsOneWidget);
+      expect(inBanner, findsNothing);
       expect(find.text('92'), findsWidgets);
       expect(find.text('38'), findsWidgets);
       expect(tester.takeException(), isNull);

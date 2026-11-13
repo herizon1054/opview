@@ -361,9 +361,10 @@ class _AugmentedRoadViewState extends State<AugmentedRoadView> {
 
   /// 橫向路況卡：左上角、opview 標題與警示列下方（直向在 PortraitPanel 卡片下方，同一個元件）
   Widget _routeCard(double screenW) {
-    if (!TdxRouteCard.visible(widget.uiState)) return const SizedBox.shrink();
-    return Positioned(top: _landscapeBannerBottom + 8, left: 14, width: min(270.0, screenW * .36),
-      child: IgnorePointer(child: RepaintBoundary(child: TdxRouteCard(state: widget.uiState))));
+    if (!TdxRouteCard.visible(widget.uiState, withAlerts: true)) return const SizedBox.shrink();
+    return Positioned(top: _landscapeBannerBottom + 8, left: 14, width: min(300.0, screenW * .36),
+      // 2026-11-13：橫向也把 TDX 事件、車速驟降收進路況卡（同直向）
+      child: IgnorePointer(child: RepaintBoundary(child: TdxRouteCard(state: widget.uiState, withAlerts: true))));
   }
 
   Widget _details() => Positioned(top: 50, bottom: 20, right: 16,

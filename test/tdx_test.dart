@@ -69,7 +69,8 @@ void main() {
   });
 
   // 2026-11-12 版面統一：卡片右欄固定是前車；前方車速在左上角路況卡，事件在上方警示列
-  testWidgets('dashboard: 前方車速 in the route card (top-left), card keeps the lead; marquee on top', (tester) async {
+  // 2026-11-13：橫向 TDX 事件也收進左上角路況卡（同直向），上方警示列只剩碰撞注意
+  testWidgets('dashboard: 前方車速 and the event in the route card (top-left), card keeps the lead', (tester) async {
     tester.view.physicalSize = const Size(844, 390);
     tester.view.devicePixelRatio = 1;
     addTearDown(() { tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio(); });
@@ -96,9 +97,8 @@ void main() {
     expect(route.left, lessThan(844 / 2));
     expect(route.top, lessThan(390 / 2));
     expect(find.byType(TdxMarquee), findsOneWidget);
-    expect(route.top, greaterThanOrEqualTo(tester.getRect(find.byType(TdxMarquee)).bottom)); // 不被警示列蓋到
-    // 跑馬燈在畫面上半部
-    expect(tester.getRect(find.byType(TdxMarquee)).top, lessThan(60));
+    expect(find.descendant(of: find.byType(TdxRouteCard), matching: find.byType(TdxMarquee)), findsOneWidget);
+    expect(route.top, greaterThan(60)); // 上方留給碰撞注意
     expect(tester.takeException(), isNull);
 
     // TDX 顯示開關（已移到顯示設定，這裡直接切 state）：關閉 → 前方車速與跑馬燈都隱藏、小車回來；再開 → 恢復
@@ -139,11 +139,12 @@ void main() {
     restored.dispose();
   });
 
-  testWidgets('short event: compact centered pill, small font', (tester) async {
+  // 原版介面（沒有路況卡）：TDX 事件仍是上方置中的膠囊
+  testWidgets('short event: compact centered pill, small font (stock overlay)', (tester) async {
     tester.view.physicalSize = const Size(844, 390);
     tester.view.devicePixelRatio = 1;
     addTearDown(() { tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio(); });
-    final state = createMockUIState()..modernOverlay = true;
+    final state = createMockUIState()..modernOverlay = false;
     state.applyTdx(_tdx(events: [{'description': '施工', 'isCurrentSection': true}]));
     await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
       home: AugmentedRoadView(uiState: state)));
@@ -222,7 +223,8 @@ void main() {
     await tester.pumpWidget(MaterialApp(theme: ThemeData.dark(),
       home: AugmentedRoadView(uiState: state)));
     await tester.pump();
-    expect(tester.getRect(find.byType(TdxMarquee)).top, lessThan(60));
+    // 2026-11-13：TDX 事件在左上角路況卡裡（畫面上半部）
+    expect(tester.getRect(find.byType(TdxMarquee)).top, lessThan(390 / 2));
     expect(tester.getRect(find.text('Changing Lanes')).top, greaterThan(390 / 2));
     // 儀表介面：字級 ×0.85，黑底寬度貼合文字（遠小於整條）且水平置中
     final t = tester.widget<Text>(find.text('Changing Lanes'));

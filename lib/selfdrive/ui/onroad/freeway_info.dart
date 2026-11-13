@@ -3,12 +3,13 @@
 //   ┌────────────────────────────────────────┐
 //   │ 前方車速  25 km/h                [壅塞] │  ← 標題列：數字依壅塞分級上色，右邊分級色塊
 //   ├────────────────────────────────────────┤
-//   │ 事件   施工 外側車道封閉          3.0 km │  ← 直向才有（橫向在上方警示列）；過長捲動
+//   │ 事件   施工 外側車道封閉          3.0 km │  ← withAlerts（儀表介面直向、橫向）；過長捲動
 //   │ 回堵   3.5 km  均速 28           1.5 km │  ← 國道；車速驟降時這一行換成黃底
-//   │        （驟降  降至 25 km/h　回堵 3.5 km）│     （直向才換；橫向的驟降在上方警示列）
+//   │        （驟降  降至 25 km/h　回堵 3.5 km）│
 //   │ 車道   [92][85][38] 內→外        1.8 km │  ← 國道；色塊依國道壅塞分級
 //   └────────────────────────────────────────┘
 // 每行固定三欄：左標籤（固定寬）｜內容｜右距離（靠右對齊），沒資料的那一行不顯示。
+// 儀表介面的道路畫面上方只剩碰撞注意（UIState.eventBannerFor）；TDX 的東西都在這張卡片裡。
 // 檔名沿用 freeway_info.dart（2026-11-12 新增的檔案），避免覆蓋解壓後留下沒用到的舊檔。
 
 import 'package:flutter/material.dart';
@@ -37,25 +38,25 @@ class TdxRouteCard extends StatelessWidget {
   final UIState state;
   /// 大小倍率：直向 1.3（同 PortraitPanel.fontZoom），橫向 1.0
   final double scale;
-  /// 直向：TDX 事件與車速驟降顯示在卡片裡；橫向在上方警示列
-  final bool portrait;
-  const TdxRouteCard({super.key, required this.state, this.scale = 1, this.portrait = false});
+  /// TDX 事件與車速驟降也顯示在卡片裡（儀表介面直向、橫向都是；2026-11-13）
+  final bool withAlerts;
+  const TdxRouteCard({super.key, required this.state, this.scale = 1, this.withAlerts = false});
 
   // 版面尺寸（× scale），heightFor 與 build 共用，直向面板依此預留高度
   static const _padV = 8.0, _padH = 12.0, _headH = 34.0, _divH = 9.0, _rowH = 26.0;
   static const _labelW = 34.0, _distW = 58.0;
 
   /// 直向卡片裡要不要顯示 TDX 事件那一行
-  static bool _hasEvent(UIState s, bool portrait) => portrait && s.tdxEventRows.isNotEmpty;
+  static bool _hasEvent(UIState s, bool withAlerts) => withAlerts && s.tdxEventRows.isNotEmpty;
 
-  static int _rows(UIState s, bool portrait) => freewayInfoRows(s) + (_hasEvent(s, portrait) ? 1 : 0);
+  static int _rows(UIState s, bool withAlerts) => freewayInfoRows(s) + (_hasEvent(s, withAlerts) ? 1 : 0);
 
   /// 有沒有東西可顯示（TDX 前方車速、國道資訊，或直向的 TDX 事件）
-  static bool visible(UIState s, {bool portrait = false}) =>
-      s.tdxNextSpeedDisplay != null || _rows(s, portrait) > 0;
+  static bool visible(UIState s, {bool withAlerts = false}) =>
+      s.tdxNextSpeedDisplay != null || _rows(s, withAlerts) > 0;
 
-  static double heightFor(UIState s, double scale, {bool portrait = false}) {
-    final rows = _rows(s, portrait);
+  static double heightFor(UIState s, double scale, {bool withAlerts = false}) {
+    final rows = _rows(s, withAlerts);
     // + 2：面板邊框（上下各 1）
     return scale * (2 * _padV + _headH + (rows > 0 ? _divH + rows * _rowH : 0)) + 2;
   }
@@ -109,7 +110,7 @@ class TdxRouteCard extends StatelessWidget {
 
     final rows = <Widget>[];
     // 事件（直向）
-    if (_hasEvent(state, portrait)) {
+    if (_hasEvent(state, withAlerts)) {
       final ev = state.tdxEventRows;
       final text = ev.map((e) => e.what).join(' / ');
       rows.add(row('事件', TdxMarquee(text: text, fontSize: 14 * s, maxWidth: double.infinity,
@@ -121,7 +122,7 @@ class TdxRouteCard extends StatelessWidget {
       final unit = state.isMetric ? 'km/h' : 'mph';
       final len = '${tdxCardDist(q.len)}${q.open ? '+' : ''}';
       final where = q.d < 50 ? '回堵中' : tdxCardDist(q.d);
-      if (portrait && state.tdxDropText.isNotEmpty) {
+      if (withAlerts && state.tdxDropText.isNotEmpty) {
         rows.add(row('驟降', Text('降至 ${q.min} $unit　回堵 $len',
             style: body.copyWith(color: _dropInk, fontWeight: FontWeight.w800)), where, hi: true));
       } else {
@@ -154,7 +155,7 @@ class TdxRouteCard extends StatelessWidget {
     }
 
     return Container(
-      height: heightFor(state, s, portrait: portrait),
+      height: heightFor(state, s, withAlerts: withAlerts),
       padding: EdgeInsets.symmetric(horizontal: _padH * s, vertical: _padV * s),
       decoration: opviewPanel(),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [

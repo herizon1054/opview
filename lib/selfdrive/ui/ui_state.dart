@@ -211,12 +211,12 @@ class UIState extends ChangeNotifier {
   /// 事件位置要顯示的文字與樣式：碰撞注意（紅）> 國道車速驟降（黃）> TDX 事件
   ({String text, bool collision, bool warn}) get eventBanner => eventBannerFor(portrait: false);
 
-  /// [portrait]：直向儀表介面的 TDX 事件、車速驟降都在路況卡裡（2026-11-13，避免資訊過多），
-  /// 道路畫面上方的警示列只剩碰撞注意。直向原版介面沒有路況卡，維持和橫向一樣。
+  /// 儀表介面（直向、橫向）：TDX 事件、車速驟降都在路況卡裡（2026-11-13），道路畫面上方的警示列只剩碰撞注意。
+  /// 原版介面沒有路況卡：碰撞注意 > 車速驟降 > TDX 事件都在警示列。[portrait] 保留給呼叫端，目前兩個方向相同。
   ({String text, bool collision, bool warn}) eventBannerFor({required bool portrait}) {
     final c = collisionText;
     if (c.isNotEmpty) return (text: c, collision: true, warn: false);
-    if (portrait && modernOverlay) return (text: '', collision: false, warn: false);
+    if (modernOverlay) return (text: '', collision: false, warn: false);
     final d = tdxDropText;
     if (d.isNotEmpty) return (text: d, collision: false, warn: true);
     return (text: isConnected ? tdxEventText : '', collision: false, warn: false);
